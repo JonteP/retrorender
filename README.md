@@ -1,4 +1,4 @@
-# retrorender v0.8
+# retrorender v0.8.1
 
 Renderar retro- och chiptunefiler i realtid över HTTP. Detta är fas 1 i designdokumentet "Retrobibliotek".
 
@@ -22,6 +22,10 @@ Renderar retro- och chiptunefiler i realtid över HTTP. Detta är fas 1 i design
 5. Kontrollera: `http://<nas-ip>:8090/health` visar vilka motorer som laddades.
 
 Containern läser biblioteket skrivskyddat och kör som användaren `apps` (568).
+
+## Vilken version körs?
+
+`/health` och webbgränssnittet (uppe till höger, och under Overview → Build) visar versionsnumret plus den commit imagen byggdes från. Den ska stämma med senaste commit på `main` på GitHub (de sju första tecknen). Visar den ett äldre värde är imagen inte uppdaterad. Vänta tills Actions-bygget är klart och starta om appen igen.
 
 ## joshw.info (nytt i v0.8)
 

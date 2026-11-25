@@ -206,7 +206,7 @@ window.addEventListener("hashchange", () => { closeModal(); route(); });
 // --- overview -------------------------------------------------------------------------------
 async function viewOverview(v) {
   const s = await api("status");
-  $("#ver").textContent = "v" + s.version;
+  $("#ver").textContent = verText(s);
   const ix = s.index, cat = s.catalog || {};
   const built = ix.built ? new Date(ix.built * 1000).toLocaleString() : "–";
   v.innerHTML = `
@@ -219,6 +219,7 @@ async function viewOverview(v) {
         <div class="stat"><span>Tracks</span><b>${ix.songs}</b></div>
         <div class="stat"><span>Last indexed</span><b>${esc(built)}</b></div>
         <div class="stat"><span>Status</span><b>${ix.scanning ? "indexing…" : ix.hashing ? "hashing…" : "idle"}</b></div>
+        <div class="stat"><span>Build</span><b class="mono">${esc(s.build?.commit || "local")}${s.build?.date ? " · " + esc(new Date(s.build.date).toLocaleString()) : ""}</b></div>
       </div>
       <div class="card"><h2>Engines</h2>
         <div class="chips">${s.engines.map((e) => `<span class="chip ok">${esc(e)}</span>`).join("")}
@@ -506,7 +507,8 @@ function remoteRow(r) {
     <td class="len">${esc(r.size)}</td><td class="actions">${actions}</td></tr>`;
 }
 
-api("status").then((s) => ($("#ver").textContent = "v" + s.version)).catch(() => {});
+const verText = (s) => `v${s.version} · ${s.build?.commit || "local"}`;
+api("status").then((s) => ($("#ver").textContent = verText(s))).catch(() => {});
 route();
 </script>
 </body>

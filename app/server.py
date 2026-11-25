@@ -42,7 +42,9 @@ from policy import plan, settings_for, shape
 from subsonic import Subsonic
 from web import WebUI
 
-VERSION = "0.8"
+VERSION = "0.8.1"
+BUILD = {"commit": os.environ.get("RETRO_BUILD_COMMIT", "local")[:7],
+         "date": os.environ.get("RETRO_BUILD_DATE", "")}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s: %(message)s")
 
@@ -89,7 +91,7 @@ SUB.on_star = JOSHW.pin_dir
 
 
 def health() -> dict:
-    return {"ok": True, "version": VERSION, "library": str(LIBRARY),
+    return {"ok": True, "version": VERSION, "build": BUILD, "library": str(LIBRARY),
             "meta": {"dir": str(META.root) if META.enabled else None,
                      "writable": META.writable},
             "catalog": CAT.stats(),
