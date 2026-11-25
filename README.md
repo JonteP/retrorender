@@ -1,4 +1,4 @@
-# retrorender v0.7
+# retrorender v0.8
 
 Renderar retro- och chiptunefiler i realtid över HTTP. Detta är fas 1 i designdokumentet "Retrobibliotek".
 
@@ -22,6 +22,22 @@ Renderar retro- och chiptunefiler i realtid över HTTP. Detta är fas 1 i design
 5. Kontrollera: `http://<nas-ip>:8090/health` visar vilka motorer som laddades.
 
 Containern läser biblioteket skrivskyddat och kör som användaren `apps` (568).
+
+## joshw.info (nytt i v0.8)
+
+Vyn **joshw** i webbgränssnittet listar spelen för de konsoler som står i `[joshw] systems` i config.toml (`wii`, `gcn`, `nsf`, …). Titel, år, utvecklare och utgivare läses ur arkivnamnen. Inget laddas ned förrän du väljer:
+
+- **Listen:** hämtar och packar upp spelet som *tillfälligt*. Tillfälliga spel över `temp_limit_gb` rensas automatiskt, det minst nyligen spelade först.
+- **Add / Keep:** spelet behålls permanent i biblioteket. En favorit (hjärta) i Music Assistant gör samma sak.
+- **Remove:** tar bort de nedladdade filerna. Spelet finns kvar i listan och kan hämtas igen.
+
+Filerna hamnar i `/library/_synced/joshw/<system>/<arkivnamn>/`, med en `.source.json` som ger rätt titel och år i album.toml. Konsolnamnen (genre) kommer från en inbyggd lista, som kan ändras under `[joshw.platforms]`. Spel som redan finns i ditt eget bibliotek med samma titel och konsol markeras "already have it". Identiska filer döljs som vanligt, och den lokala kopian vinner.
+
+Hänsyn mot joshw.info, som drivs av frivilliga: en nedladdning i taget, `delay_s` sekunders paus mellan anropen, och listorna läses om högst en gång per `refresh_hours`.
+
+Krav:
+- `/library/_synced` monterad **skrivbar**, efter den skrivskyddade `/library` i compose. Mappen ska ägas av 568:568.
+- `[joshw] enabled = true` i config.toml.
 
 ## Webbgränssnitt (nytt i v0.7)
 

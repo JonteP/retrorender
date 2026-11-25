@@ -12,6 +12,7 @@ services:
     volumes:
       - /mnt/tank/media/retro:/library:ro               # the library, read-only
       - /mnt/tank/apps/retrorender/meta:/meta           # album.toml, writable (include in backups)
+      - /mnt/tank/media/retro/_synced:/library/_synced  # downloads (joshw), writable; must come after /library
       - /mnt/tank/apps/retrorender/config.toml:/config/config.toml:ro
     environment:
       TZ: Europe/Stockholm

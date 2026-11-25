@@ -38,6 +38,7 @@ class Subsonic:
         sc = cfg.get("subsonic", {})
         self.user = str(sc.get("user", "musicassistant"))
         self.password = str(sc.get("password", "retro"))
+        self.on_star = lambda rel: None      # replaced by the server (pins downloads)
 
     # --- inramning ------------------------------------------------------------
     def handle(self, handler, method: str, q: dict):
@@ -343,7 +344,19 @@ class Subsonic:
     def m_getPlayQueue(self, q, h):
         return {}
 
-    # scrobble, star, unstar, setRating, savePlayQueue m.fl. hamnar i "okänd metod" = ok
+    def m_star(self, q, h):
+        """A favourite in MA pins temporary downloads, so they are never evicted."""
+        ids = [v for k, v in q.items() if k in ("id", "albumId", "artistId")]
+        for i in ids:
+            if i in self.ix.songs:
+                self.on_star(self.ix.songs[i].rel)
+            elif i in self.ix.albums:
+                for sid in self.ix.albums[i].songs:
+                    if sid in self.ix.songs:
+                        self.on_star(self.ix.songs[sid].rel)
+        return {}
+
+    # scrobble, unstar, setRating, savePlayQueue m.fl. hamnar i "okänd metod" = ok
 
     # --- media --------------------------------------------------------------------
     def m_stream(self, q, h):

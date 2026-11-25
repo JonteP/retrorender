@@ -138,6 +138,18 @@ def parse_sidecars(d: Path) -> tuple[dict, dict, dict]:
                     entry[k] = pending[k]
             entry.setdefault("order", num)
             pending = {}
+    # .source.json is written by retrorender for synced downloads (e.g. joshw): the
+    # archive's official title and release date, used when tags and playlists lack them
+    src = d / ".source.json"
+    if src.is_file():
+        try:
+            import json
+            info = json.loads(src.read_text("utf-8"))
+            album.setdefault("album", info.get("album", ""))
+            if info.get("date"):
+                album.setdefault("date", info["date"])
+        except (OSError, ValueError):
+            pass
     return album, files, nez
 
 

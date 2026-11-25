@@ -210,6 +210,11 @@ class Library:
             for d in sorted(p for p in self.root.iterdir()
                             if p.is_dir() and not p.name.startswith(("_", "."))):
                 self._scan_platform(idx, d)
+            # downloads from remote sources come last, so local copies win duplicates
+            synced = self.root / "_synced" / "joshw"
+            if synced.is_dir():
+                for d in sorted(p for p in synced.iterdir() if p.is_dir()):
+                    self._scan_platform(idx, d, platform=self.synced_platform(d.name))
             self._finish(idx)
             idx.built = time.time()
             self.index = idx
@@ -285,8 +290,12 @@ class Library:
     def platform_name(self, folder: str) -> str:
         return str(self.cfg.get("platforms", {}).get(folder, folder))
 
-    def _scan_platform(self, idx: Index, pdir: Path):
-        default_platform = self.platform_name(pdir.name)
+    def synced_platform(self, system: str) -> str:
+        """Console name for a synced source folder; replaced by the server (joshw names)."""
+        return system
+
+    def _scan_platform(self, idx: Index, pdir: Path, platform: str | None = None):
+        default_platform = platform or self.platform_name(pdir.name)
         albums: list[Album] = []
         dirs: dict[Path, list[Path]] = {}
         for f in pdir.rglob("*"):
