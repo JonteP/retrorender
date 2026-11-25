@@ -116,6 +116,10 @@ class Catalog:
             self.db.executescript(SCHEMA)
             self.db.execute("PRAGMA journal_mode=WAL")
             self.db.execute("INSERT OR REPLACE INTO info VALUES ('schema', ?)", (SCHEMA_VERSION,))
+            # v0.9.1: TXTP checksums now include the file name; rehash old ones once
+            if not self.db.execute("SELECT 1 FROM info WHERE key='txtp_hash'").fetchone():
+                self.db.execute("UPDATE files SET sha1=NULL WHERE lower(path) LIKE '%.txtp'")
+                self.db.execute("INSERT OR REPLACE INTO info VALUES ('txtp_hash', '1')")
             self.db.commit()
         except (sqlite3.Error, OSError) as e:
             log.warning("catalog disabled (%s): %s", path, e)
@@ -196,6 +200,15 @@ class Catalog:
         for (rel,) in rows:
             p = root / rel
             h = hashlib.sha1()
+            if p.suffix.lower() == ".txtp":
+                # a TXTP is often empty and carries its command in the file name
+                # ("x.ast#C1,2.txtp"), so the name is part of what it plays
+                h.update(p.name.lower().encode("utf-8") + b"\0")
+                from txtp import references
+                for ref in sorted(references(p)):            # and which data it points at
+                    hit = next((q for q in p.parent.iterdir() if q.name.lower() == ref), None)
+                    size = hit.stat().st_size if hit else -1
+                    h.update(f"{ref}:{size}\0".encode("utf-8"))
             try:
                 with open(p, "rb") as fh:
                     for chunk in iter(lambda: fh.read(1 << 20), b""):
