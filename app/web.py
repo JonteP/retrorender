@@ -1,0 +1,259 @@
+"""Web UI: serves the single-page admin interface and its JSON API.
+
+Routes (all require HTTP Basic auth with the [web] or [subsonic] credentials):
+  GET  /, /ui                     the page (app/web/index.html)
+  GET  /api/status                version, engines, index and catalog stats
+  GET  /api/platforms             consoles with album/song counts
+  GET  /api/artists               composers with album counts
+  GET  /api/albums?platform=&artist=&q=
+  GET  /api/album/<id>            album details, tracks, album.toml text
+  GET  /api/cover/<album id>      cover image
+  GET  /api/catalog               identical files, hidden duplicates, editions
+  GET  /api/regenerate-all?path=  preview of a forced regeneration (no changes)
+  POST /api/album/<id>/toml       save album.toml (body = TOML text, validated)
+  POST /api/album/<id>/regenerate regenerate one album.toml (edited file is backed up)
+  POST /api/regenerate-all?path=  forced regeneration (everything backed up first)
+  POST /api/rescan                re-index now
+"""
+from __future__ import annotations
+
+import base64
+import hmac
+import json
+import logging
+import threading
+import tomllib
+from pathlib import Path
+from urllib.parse import quote
+
+from meta import gen_status
+
+log = logging.getLogger("web")
+
+PAGE = Path(__file__).parent / "web" / "index.html"
+
+
+class WebUI:
+    def __init__(self, cfg: dict, lib, meta, cat, status_fn, probe):
+        self.cfg = cfg
+        self.lib = lib
+        self.meta = meta
+        self.cat = cat
+        self.status_fn = status_fn
+        self.probe = probe
+        web = cfg.get("web", {})
+        sub = cfg.get("subsonic", {})
+        self.user = str(web.get("user", sub.get("user", "musicassistant")))
+        self.password = str(web.get("password", sub.get("password", "retro")))
+
+    # --- auth ------------------------------------------------------------------------
+    def authorized(self, h) -> bool:
+        hdr = h.headers.get("Authorization", "")
+        if not hdr.startswith("Basic "):
+            return False
+        try:
+            user, _, pw = base64.b64decode(hdr[6:]).decode("utf-8").partition(":")
+        except (ValueError, UnicodeDecodeError):
+            return False
+        return (hmac.compare_digest(user, self.user)
+                and hmac.compare_digest(pw, self.password))
+
+    @staticmethod
+    def challenge(h):
+        body = b"Login required"
+        h.send_response(401)
+        h.send_header("WWW-Authenticate", 'Basic realm="retrorender", charset="UTF-8"')
+        h.send_header("Content-Type", "text/plain; charset=utf-8")
+        h.send_header("Content-Length", str(len(body)))
+        h.end_headers()
+        h.wfile.write(body)
+
+    # --- dispatch ----------------------------------------------------------------------
+    def handle(self, h, route: str, q: dict) -> bool:
+        """Returns True if the route belonged to the web UI (and was answered)."""
+        if route not in ("/", "/ui") and not route.startswith("/api/"):
+            return False
+        if not self.authorized(h):
+            self.challenge(h)
+            return True
+        if route in ("/", "/ui"):
+            return self._page(h)
+        parts = route[len("/api/"):].split("/")
+        post = h.command == "POST"
+        name = parts[0]
+        if name == "status":
+            return h._json(self.status_fn()) or True
+        if name == "platforms":
+            return h._json(self.platforms()) or True
+        if name == "artists":
+            return h._json(self.artists()) or True
+        if name == "albums":
+            return h._json(self.albums(q)) or True
+        if name == "album" and len(parts) >= 2:
+            al = self.lib.index.albums.get(parts[1])
+            if al is None:
+                return h._json({"error": "album not found"}, 404) or True
+            action = parts[2] if len(parts) > 2 else ""
+            if action == "" and not post:
+                return h._json(self.album(al)) or True
+            if action == "toml" and post:
+                return h._json(*self.save_toml(al, h)) or True
+            if action == "regenerate" and post:
+                return h._json(self.regenerate(al)) or True
+        if name == "cover" and len(parts) >= 2:
+            return self._cover(h, parts[1])
+        if name == "catalog":
+            return h._json(self.lib.catalog_report()) or True
+        if name == "rescan" and post:
+            threading.Thread(target=self.lib.scan, daemon=True).start()
+            return h._json({"ok": True}) or True
+        if name == "regenerate-all":
+            return h._json(*self.regenerate_all(q, execute=post)) or True
+        return h._json({"error": "unknown API route"}, 404) or True
+
+    # --- views ---------------------------------------------------------------------------
+    def _page(self, h) -> bool:
+        data = PAGE.read_bytes()
+        h.send_response(200)
+        h.send_header("Content-Type", "text/html; charset=utf-8")
+        h.send_header("Content-Length", str(len(data)))
+        h.send_header("Cache-Control", "no-store")
+        h.end_headers()
+        h.wfile.write(data)
+        return True
+
+    def _album_brief(self, al) -> dict:
+        ix = self.lib.index
+        return {"id": al.id, "name": al.name, "platform": al.platform, "year": al.year,
+                "artists": [{"id": i, "name": n} for i, n in al.artists],
+                "songs": len(al.songs),
+                "duration": int(sum(ix.songs[s].duration for s in al.songs if s in ix.songs)),
+                "cover": bool(al.cover), "region": al.region}
+
+    def platforms(self) -> list:
+        ix = self.lib.index
+        out = []
+        for g, ids in ix.genres.items():
+            als = [ix.albums[i] for i in ids if i in ix.albums]
+            out.append({"name": g, "albums": len(als), "songs": sum(len(a.songs) for a in als)})
+        return sorted(out, key=lambda x: x["name"].lower())
+
+    def artists(self) -> list:
+        ix = self.lib.index
+        return sorted(({"id": a.id, "name": a.name, "albums": len(a.albums)}
+                       for a in ix.artists.values()), key=lambda x: x["name"].lower())
+
+    def albums(self, q: dict) -> dict:
+        ix = self.lib.index
+        als = list(ix.albums.values())
+        if q.get("platform"):
+            als = [a for a in als if a.platform == q["platform"]]
+        if q.get("artist"):
+            als = [a for a in als if any(i == q["artist"] for i, _ in a.artists)]
+        term = q.get("q", "").strip().lower()
+        songs = []
+        if term:
+            def hit(text):
+                return term in (text or "").lower()
+            match = [a for a in als if hit(a.name) or hit(a.artist) or hit(a.platform)]
+            ids = {a.id for a in als}
+            songs = [s for s in ix.songs.values()
+                     if s.album_id in ids and (hit(s.title) or hit(s.artist))][:200]
+            als = match + [ix.albums[i] for i in {s.album_id for s in songs}
+                           if ix.albums[i] not in match]
+        als.sort(key=lambda a: (a.platform.lower(), a.name.lower()))
+        return {"albums": [self._album_brief(a) for a in als],
+                "songs": [{"id": s.id, "title": s.title, "artist": s.artist,
+                           "album_id": s.album_id,
+                           "album": ix.albums[s.album_id].name} for s in songs]}
+
+    def album(self, al) -> dict:
+        ix = self.lib.index
+        tracks = []
+        for sid in al.songs:
+            s = ix.songs.get(sid)
+            if not s:
+                continue
+            tracks.append({"id": s.id, "track": s.track, "title": s.title, "artist": s.artist,
+                           "duration": round(s.duration, 1), "engine": s.engine,
+                           "file": s.rel, "sub": s.sub,
+                           "render": f"/render?path={quote(s.rel)}&sub={s.sub}"})
+        toml_text, state = "", "missing"
+        p = self.meta.path_for(al.key) if self.meta.enabled else None
+        if p and p.is_file():
+            toml_text = p.read_text("utf-8")
+            ver, untouched = gen_status(toml_text)
+            state = "untouched" if untouched else ("edited" if ver is not None else "legacy")
+        d = self._album_brief(al)
+        d.update(tracks=tracks, key=al.key, game_key=al.game_key, chips=al.chips,
+                 toml=toml_text, toml_state=state, toml_path=str(p) if p else None,
+                 writable=self.meta.writable)
+        return d
+
+    def _cover(self, h, album_id: str) -> bool:
+        al = self.lib.index.albums.get(album_id)
+        if al is None or not al.cover or not Path(al.cover).is_file():
+            h.send_response(404)
+            h.send_header("Content-Length", "0")
+            h.end_headers()
+            return True
+        p = Path(al.cover)
+        data = p.read_bytes()
+        h.send_response(200)
+        h.send_header("Content-Type", "image/png" if p.suffix.lower() == ".png" else "image/jpeg")
+        h.send_header("Content-Length", str(len(data)))
+        h.send_header("Cache-Control", "max-age=3600")
+        h.end_headers()
+        h.wfile.write(data)
+        return True
+
+    # --- changes -------------------------------------------------------------------------
+    def save_toml(self, al, h):
+        if not self.meta.writable:
+            return {"error": "the meta folder is not writable"}, 403
+        n = int(h.headers.get("Content-Length") or 0)
+        text = h.rfile.read(n).decode("utf-8") if n else ""
+        try:
+            tomllib.loads(text)
+        except tomllib.TOMLDecodeError as e:
+            return {"error": f"invalid TOML: {e}"}, 422
+        p = self.meta.path_for(al.key)
+        if p.is_file():
+            ver, untouched = gen_status(p.read_text("utf-8"))
+            if not untouched:                      # keep a copy of earlier hand edits
+                self.meta.backup_and_remove([p])
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(text, "utf-8")
+        tmp.replace(p)
+        self.meta._cache.pop(str(p), None)
+        log.info("saved %s from the web UI", p)
+        threading.Thread(target=self.lib.scan, daemon=True).start()
+        return {"ok": True, "message": "saved; re-indexing"}, 200
+
+    def regenerate(self, al) -> dict:
+        if not self.meta.writable:
+            return {"error": "the meta folder is not writable"}
+        f = self.lib.root / al.first_file
+        eng, tracks = self.probe(f)
+        self.meta.delete(al.key)
+        self.lib.ensure_meta(al.key, f, eng, tracks)
+        threading.Thread(target=self.lib.scan, daemon=True).start()
+        return {"ok": True, "message": "regenerated; re-indexing"}
+
+    def regenerate_all(self, q: dict, execute: bool):
+        if not self.meta.writable:
+            return {"error": "the meta folder is not writable"}, 403
+        under = q.get("path", "").strip("/")
+        files = self.meta.all_files(under)
+        groups = self.meta.classify(files)
+        summary = {"files": len(files),
+                   "untouched": len(groups["orörda"]),
+                   "edited": groups["redigerade"],
+                   "legacy": len(groups["utan_kontrollsumma"])}
+        if not execute:
+            return summary, 200
+        dest = self.meta.backup_and_remove(files)
+        threading.Thread(target=self.lib.scan, daemon=True).start()
+        summary.update(ok=True, backup=str(dest))
+        return summary, 200
