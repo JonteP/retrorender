@@ -1,4 +1,4 @@
-# retrorender v0.6
+# retrorender v0.7
 
 Renderar retro- och chiptunefiler i realtid över HTTP. Detta är fas 1 i designdokumentet "Retrobibliotek".
 
@@ -22,6 +22,23 @@ Renderar retro- och chiptunefiler i realtid över HTTP. Detta är fas 1 i design
 5. Kontrollera: `http://<nas-ip>:8090/health` visar vilka motorer som laddades.
 
 Containern läser biblioteket skrivskyddat och kör som användaren `apps` (568).
+
+## Webbgränssnitt (nytt i v0.7)
+
+Öppna `http://<nas-ip>:8090/`. Inloggningen använder `user` och `password` från `[subsonic]`, eller från ett eget avsnitt `[web]` om du vill ha separata uppgifter:
+
+```toml
+[web]
+user = "admin"
+password = "något-annat"
+```
+
+- **Overview:** version, motorer, index- och katalogstatus, knappen "Re-index now" och "Regenerate all metadata…" (med förhandsvisning och bekräftelse).
+- **Library:** bläddra per konsol och kompositör, och sök i album, kompositörer, konsoler och spår.
+- **Album:** spårlista med provlyssning i webbläsaren, redigering av `album.toml` (valideras innan den sparas, så att en felaktig fil aldrig skrivs) och "Regenerate…".
+- **Catalog:** dolda dubbletter, album med samma spelnyckel och spelnyckeln för alla album.
+
+Det som ändrar något kräver inloggning: allt under `/api/`, samt `/rescan`, `/meta/regenerate` och `/meta/regenerate-all`. `/health`, `/info`, `/render`, `/browse`, `/m3u` och `/meta/show` är fortfarande öppna, så att Home Assistant och Chromecast kan använda render-URL:er utan inloggning.
 
 ## Katalog i SQLite (nytt i v0.6)
 

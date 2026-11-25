@@ -1,5 +1,7 @@
 """Retrorender: renderar retro- och chiptunefiler i realtid över HTTP.
 
+GET / (eller /ui)                       webbgränssnittet (kräver inloggning)
+GET /api/...                            webbgränssnittets API (kräver inloggning)
 GET /health
 GET /browse?path=<mapp>                 mappar och spelbara filer
 GET /info?path=<fil>[&policyparametrar] delspår, metadata och planerad speltid
@@ -36,6 +38,9 @@ from library import Library
 from meta import MetaStore
 from policy import plan, settings_for, shape
 from subsonic import Subsonic
+from web import WebUI
+
+VERSION = "0.7"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s: %(message)s")
 
@@ -77,6 +82,25 @@ LIB = Library(LIBRARY, REG, CFG, probe, SAMPLE_RATE, META, CAT)
 SUB = Subsonic(LIB, CFG)
 
 
+def health() -> dict:
+    return {"ok": True, "version": VERSION, "library": str(LIBRARY),
+            "meta": {"dir": str(META.root) if META.enabled else None,
+                     "writable": META.writable},
+            "catalog": CAT.stats(),
+            "index": {"scanning": LIB.scanning, "hashing": LIB._hashing,
+                      "artists": len(LIB.index.artists),
+                      "albums": len(LIB.index.albums),
+                      "genres": len(LIB.index.genres),
+                      "songs": len(LIB.index.songs),
+                      "built": LIB.index.built},
+            "engines": [e.name for e in REG.engines],
+            "missing": REG.missing,
+            "diagnostics": REG.diagnostics()}
+
+
+WEB = WebUI(CFG, LIB, META, CAT, health, probe)
+
+
 def wav_header(frames: int, rate: int) -> bytes:
     data = frames * 4
     return (b"RIFF" + struct.pack("<I", 36 + data) + b"WAVEfmt "
@@ -86,7 +110,7 @@ def wav_header(frames: int, rate: int) -> bytes:
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"
-    server_version = "retrorender/0.6"
+    server_version = f"retrorender/{VERSION}"
 
     # --- hjälpare -------------------------------------------------------
     def _q(self) -> dict:
@@ -135,19 +159,13 @@ class Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 return
         try:
+            if WEB.handle(self, route, q):
+                return
+            if route in ("/rescan", "/meta/regenerate", "/meta/regenerate-all") \
+                    and not WEB.authorized(self):
+                return WEB.challenge(self)              # changes require login
             if route == "/health":
-                return self._json({"ok": True, "version": "0.6", "library": str(LIBRARY),
-                                   "meta": {"dir": str(META.root) if META.enabled else None,
-                                            "writable": META.writable},
-                                   "catalog": CAT.stats(),
-                                   "index": {"scanning": LIB.scanning,
-                                             "artists": len(LIB.index.artists),
-                                             "albums": len(LIB.index.albums),
-                                             "genres": len(LIB.index.genres),
-                                             "songs": len(LIB.index.songs)},
-                                   "engines": [e.name for e in REG.engines],
-                                   "missing": REG.missing,
-                                   "diagnostics": REG.diagnostics()})
+                return self._json(health())
             if route == "/browse":
                 return self.browse(q)
             if route == "/info":

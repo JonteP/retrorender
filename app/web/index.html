@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>retrorender</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 rx=%273%27 fill=%27%23f2b84b%27/%3E%3Cpath d=%27M5 4v8l7-4z%27 fill=%27%23111418%27/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #111418; --panel: #191d23; --panel2: #20252c; --line: #2c323b;
+    --text: #e6e8eb; --muted: #8b939e; --accent: #f2b84b; --accent2: #6fd3a7;
+    --bad: #f07167; --radius: 10px;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: inherit; text-decoration: none; }
+  a.link { color: var(--accent); }
+  a.link:hover { text-decoration: underline; }
+  header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 24px;
+    padding: 12px 24px; background: rgba(17,20,24,.92); backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--line); }
+  .logo { font-family: var(--mono); font-weight: 700; letter-spacing: .5px; }
+  .logo span { color: var(--accent); }
+  nav a { padding: 6px 12px; border-radius: 8px; color: var(--muted); }
+  nav a.on, nav a:hover { color: var(--text); background: var(--panel2); }
+  header .ver { margin-left: auto; color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  main { padding: 24px; padding-bottom: 110px; max-width: 1400px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 0 0 12px; color: var(--muted); font-weight: 600;
+    text-transform: uppercase; letter-spacing: .6px; }
+  .muted { color: var(--muted); }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 16px; }
+  .stat { display: flex; justify-content: space-between; padding: 4px 0;
+    border-bottom: 1px dashed var(--line); }
+  .stat:last-child { border: 0; }
+  .stat b { font-variant-numeric: tabular-nums; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { padding: 2px 9px; border-radius: 99px; background: var(--panel2);
+    border: 1px solid var(--line); font-size: 12px; }
+  .chip.ok { border-color: #2f6b55; color: var(--accent2); }
+  .chip.bad { border-color: #7a3b37; color: var(--bad); }
+  .chip.warn { border-color: #6d5520; color: var(--accent); }
+  button { font: inherit; color: var(--text); background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 8px; padding: 7px 14px; cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); color: #1b1407; border-color: var(--accent);
+    font-weight: 600; }
+  button.danger { color: var(--bad); border-color: #7a3b37; }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  input[type=search], input[type=text] { width: 100%; padding: 8px 12px; color: var(--text);
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+  /* library */
+  .lib { display: grid; grid-template-columns: 250px 1fr; gap: 24px; }
+  .side { position: sticky; top: 76px; align-self: start; max-height: calc(100vh - 200px);
+    overflow: auto; }
+  .side h2 { margin-top: 18px; }
+  .side a { display: flex; justify-content: space-between; padding: 4px 8px;
+    border-radius: 6px; color: var(--muted); }
+  .side a:hover, .side a.on { background: var(--panel2); color: var(--text); }
+  .albums { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+  .album { display: block; }
+  .cover { aspect-ratio: 1; border-radius: 8px; background: var(--panel2) center/cover;
+    border: 1px solid var(--line); display: grid; place-items: center; overflow: hidden; }
+  .cover .ph { font-family: var(--mono); color: var(--muted); font-size: 13px; text-align: center;
+    padding: 12px; }
+  .album .t { margin-top: 8px; font-weight: 600; line-height: 1.25; }
+  .album .s { font-size: 12px; color: var(--muted); }
+  .album:hover .cover { border-color: var(--accent); }
+  /* album page */
+  .ahead { display: grid; grid-template-columns: 200px 1fr; gap: 24px; margin-bottom: 24px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;
+    padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr.playing td { color: var(--accent); }
+  td.num { width: 40px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  td.len { width: 70px; text-align: right; font-variant-numeric: tabular-nums; }
+  .play { width: 30px; height: 30px; padding: 0; border-radius: 50%; }
+  textarea { width: 100%; min-height: 360px; resize: vertical; padding: 12px; color: var(--text);
+    background: #0c0f12; border: 1px solid var(--line); border-radius: 8px;
+    font: 12.5px/1.5 var(--mono); tab-size: 2; white-space: pre; overflow-x: auto; }
+  .two { display: grid; grid-template-columns: 1.2fr 1fr; gap: 24px; }
+  details summary { cursor: pointer; color: var(--muted); }
+  /* player, toast, modal */
+  .player { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; display: flex; gap: 16px;
+    align-items: center; padding: 10px 24px; background: var(--panel);
+    border-top: 1px solid var(--line); }
+  .player .now { min-width: 0; flex: 0 1 380px; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+  .player audio { flex: 1; height: 36px; }
+  .toast { position: fixed; right: 24px; bottom: 80px; z-index: 9; padding: 10px 16px;
+    border-radius: 8px; background: var(--panel2); border: 1px solid var(--line);
+    opacity: 0; transform: translateY(8px); transition: .2s; pointer-events: none; }
+  .toast.show { opacity: 1; transform: none; }
+  .toast.err { border-color: #7a3b37; color: var(--bad); }
+  .modal { position: fixed; inset: 0; z-index: 10; display: none; place-items: center;
+    background: rgba(0,0,0,.6); }
+  .modal.show { display: grid; }
+  .modal .box { width: min(560px, 92vw); background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 20px; }
+  .modal .box ul { max-height: 180px; overflow: auto; }
+  .warnbox { border-left: 3px solid var(--bad); padding: 8px 12px; background: #231819;
+    border-radius: 6px; margin: 12px 0; }
+  @media (max-width: 860px) {
+    .lib, .ahead, .two { grid-template-columns: 1fr; }
+    .side { position: static; max-height: none; }
+    header { gap: 12px; padding: 10px 14px; }
+    header .ver { display: none; }
+    nav a { padding: 6px 8px; }
+    main { padding: 16px; padding-bottom: 120px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">retro<span>render</span></div>
+  <nav>
+    <a href="#/" data-nav="overview">Overview</a>
+    <a href="#/library" data-nav="library">Library</a>
+    <a href="#/catalog" data-nav="catalog">Catalog</a>
+  </nav>
+  <div class="ver" id="ver"></div>
+</header>
+<main id="view"><p class="muted">Loading…</p></main>
+
+<div class="player">
+  <div class="now"><span class="muted">Not playing</span></div>
+  <audio id="audio" controls preload="none"></audio>
+</div>
+<div class="toast" id="toast"></div>
+<div class="modal" id="modal"><div class="box" id="modalbox"></div></div>
+
+<script>
+"use strict";
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmt = (s) => { s = Math.round(s || 0); const m = Math.floor(s / 60);
+  return m >= 60 ? `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`
+                 : `${m}:${String(s % 60).padStart(2, "0")}`; };
+const initials = (t) => (t || "?").replace(/\([^)]*\)|\[[^\]]*\]/g, " ").split(/\s+/)
+  .filter((w) => /^[\p{L}\p{N}]/u.test(w)).slice(0, 3).map((w) => w[0]).join("").toUpperCase() || "?";
+
+async function api(path, opts = {}) {
+  const r = await fetch("/api/" + path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || r.statusText);
+  return data;
+}
+function toast(msg, err = false) {
+  const t = $("#toast"); t.textContent = msg; t.className = "toast show" + (err ? " err" : "");
+  clearTimeout(t._h); t._h = setTimeout(() => (t.className = "toast"), 3500);
+}
+function modal(html) { $("#modalbox").innerHTML = html; $("#modal").classList.add("show"); }
+function closeModal() { $("#modal").classList.remove("show"); }
+$("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
+
+// --- player -------------------------------------------------------------------------------
+let playingId = null;
+function play(t, album) {
+  const a = $("#audio");
+  a.src = t.render; a.play().catch(() => {});
+  playingId = t.id;
+  $(".player .now").innerHTML = `<b>${esc(t.title)}</b> <span class="muted">· ${esc(album)}</span>`;
+  document.querySelectorAll("tr[data-id]").forEach((r) =>
+    r.classList.toggle("playing", r.dataset.id === playingId));
+}
+
+// --- router ---------------------------------------------------------------------------------
+function parseHash() {
+  const h = location.hash.replace(/^#\/?/, "");
+  const [path, qs] = h.split("?");
+  return { parts: path.split("/").filter(Boolean), q: new URLSearchParams(qs || "") };
+}
+async function route() {
+  const { parts, q } = parseHash();
+  const page = parts[0] || "overview";
+  document.querySelectorAll("nav a").forEach((a) =>
+    a.classList.toggle("on", a.dataset.nav === (page === "album" ? "library" : page)));
+  const v = $("#view");
+  try {
+    if (page === "library") await viewLibrary(v, q);
+    else if (page === "album") await viewAlbum(v, parts[1]);
+    else if (page === "catalog") await viewCatalog(v);
+    else await viewOverview(v);
+  } catch (e) { v.innerHTML = `<div class="card"><b>Error:</b> ${esc(e.message)}</div>`; }
+}
+window.addEventListener("hashchange", () => { closeModal(); route(); });
+
+// --- overview -------------------------------------------------------------------------------
+async function viewOverview(v) {
+  const s = await api("status");
+  $("#ver").textContent = "v" + s.version;
+  const ix = s.index, cat = s.catalog || {};
+  const built = ix.built ? new Date(ix.built * 1000).toLocaleString() : "–";
+  v.innerHTML = `
+    <h1>Overview</h1><p class="muted">Library at <span class="mono">${esc(s.library)}</span></p>
+    <div class="grid">
+      <div class="card"><h2>Index</h2>
+        <div class="stat"><span>Consoles</span><b>${ix.genres}</b></div>
+        <div class="stat"><span>Composers</span><b>${ix.artists}</b></div>
+        <div class="stat"><span>Albums</span><b>${ix.albums}</b></div>
+        <div class="stat"><span>Tracks</span><b>${ix.songs}</b></div>
+        <div class="stat"><span>Last indexed</span><b>${esc(built)}</b></div>
+        <div class="stat"><span>Status</span><b>${ix.scanning ? "indexing…" : ix.hashing ? "hashing…" : "idle"}</b></div>
+      </div>
+      <div class="card"><h2>Engines</h2>
+        <div class="chips">${s.engines.map((e) => `<span class="chip ok">${esc(e)}</span>`).join("")}
+          ${s.missing.map((e) => `<span class="chip bad">${esc(e)} missing</span>`).join("")}</div>
+        ${s.diagnostics.vgm2wav_help ? `<details style="margin-top:12px"><summary>vgm2wav</summary>
+          <pre class="mono muted" style="white-space:pre-wrap">${esc(s.diagnostics.vgm2wav_help)}</pre></details>` : ""}
+      </div>
+      <div class="card"><h2>Catalog</h2>
+        <div class="stat"><span>Files</span><b>${cat.files ?? "–"}</b></div>
+        <div class="stat"><span>Hashed</span><b>${cat.hashed ?? "–"}</b></div>
+        <div class="stat"><span>Meta folder</span><b>${s.meta.writable ? "writable" : "read-only"}</b></div>
+        <p class="mono muted">${esc(s.meta.dir || "")}</p>
+      </div>
+      <div class="card"><h2>Maintenance</h2>
+        <div class="row" style="margin-bottom:12px">
+          <button class="primary" id="rescan">Re-index now</button></div>
+        <p class="muted">Regenerating replaces album.toml files with fresh ones. Everything is moved to a backup first.</p>
+        <button class="danger" id="regall" ${s.meta.writable ? "" : "disabled"}>Regenerate all metadata…</button>
+      </div>
+    </div>`;
+  $("#rescan").onclick = async () => { await api("rescan", { method: "POST" }); toast("Re-indexing started"); };
+  $("#regall").onclick = () => confirmRegenerateAll("");
+}
+
+async function confirmRegenerateAll(path) {
+  const p = await api("regenerate-all" + (path ? "?path=" + encodeURIComponent(path) : ""));
+  modal(`<h1>Regenerate all metadata?</h1>
+    <p>This replaces <b>${p.files}</b> album.toml files ${path ? "under " + esc(path) : "in the whole library"}.</p>
+    ${p.edited.length || p.legacy ? `<div class="warnbox">
+      <b>${p.edited.length}</b> files have been edited by hand${p.legacy ? ` and <b>${p.legacy}</b> come from an older version (they may contain edits)` : ""}.
+      Your edits will disappear from the library, but every file is moved to <span class="mono">/meta/.backup/</span> first.
+      ${p.edited.length ? `<ul class="mono">${p.edited.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}</div>` : ""}
+    <label class="row"><input type="checkbox" id="ok"> I understand</label>
+    <div class="row" style="justify-content:flex-end;margin-top:16px">
+      <button onclick="closeModal()">Cancel</button>
+      <button class="danger" id="go" disabled>Regenerate ${p.files} files</button></div>`);
+  $("#ok").onchange = (e) => ($("#go").disabled = !e.target.checked);
+  $("#go").onclick = async () => {
+    const r = await api("regenerate-all" + (path ? "?path=" + encodeURIComponent(path) : ""), { method: "POST" });
+    closeModal(); toast(`Moved ${r.files} files to backup; regenerating`);
+  };
+}
+
+// --- library --------------------------------------------------------------------------------
+async function viewLibrary(v, q) {
+  const [platforms, artists] = await Promise.all([api("platforms"), api("artists")]);
+  const params = new URLSearchParams();
+  for (const k of ["platform", "artist", "q"]) if (q.get(k)) params.set(k, q.get(k));
+  const res = await api("albums?" + params);
+  const link = (k, val) => { const p = new URLSearchParams(params);
+    if (val == null || p.get(k) === val) p.delete(k); else p.set(k, val);
+    return "#/library?" + p; };
+  const artistName = q.get("artist") ? (artists.find((a) => a.id === q.get("artist")) || {}).name : null;
+  const title = [q.get("platform"), artistName, q.get("q") && `“${q.get("q")}”`].filter(Boolean).join(" · ") || "All albums";
+  v.innerHTML = `
+  <div class="lib">
+    <aside class="side">
+      <input type="search" id="search" placeholder="Search titles, composers, consoles" value="${esc(q.get("q") || "")}">
+      <h2>Consoles</h2>
+      ${platforms.map((p) => `<a href="${link("platform", p.name)}" class="${q.get("platform") === p.name ? "on" : ""}">
+         <span>${esc(p.name)}</span><span>${p.albums}</span></a>`).join("")}
+      <h2>Composers</h2>
+      ${artists.slice(0, 150).map((a) => `<a href="${link("artist", a.id)}" class="${q.get("artist") === a.id ? "on" : ""}">
+         <span>${esc(a.name)}</span><span>${a.albums}</span></a>`).join("")}
+      ${artists.length > 150 ? `<p class="muted" style="padding:4px 8px">…and ${artists.length - 150} more. Use the search.</p>` : ""}
+    </aside>
+    <section>
+      <div class="row" style="justify-content:space-between;margin-bottom:16px">
+        <div><h1>${esc(title)}</h1><span class="muted">${res.albums.length} albums</span></div>
+        ${params.toString() ? `<a class="link" href="#/library">Clear filters</a>` : ""}
+      </div>
+      ${res.songs.length ? `<div class="card" style="margin-bottom:20px"><h2>Matching tracks</h2>
+        ${res.songs.slice(0, 30).map((s) => `<div><a class="link" href="#/album/${s.album_id}">${esc(s.title)}</a>
+          <span class="muted">· ${esc(s.artist)} · ${esc(s.album)}</span></div>`).join("")}</div>` : ""}
+      <div class="albums">${res.albums.map(albumCard).join("") || `<p class="muted">Nothing found.</p>`}</div>
+    </section>
+  </div>`;
+  const s = $("#search");
+  s.onkeydown = (e) => {
+    if (e.key !== "Enter") return;
+    const p = new URLSearchParams(params), val = s.value.trim();
+    if (val) p.set("q", val); else p.delete("q");
+    location.hash = "#/library" + (p.toString() ? "?" + p : "");
+  };
+}
+function albumCard(a) {
+  const cover = a.cover ? `style="background-image:url('/api/cover/${a.id}')"` : "";
+  return `<a class="album" href="#/album/${a.id}">
+    <div class="cover" ${cover}>${a.cover ? "" : `<div class="ph">${esc(a.platform)}<br><b>${esc(initials(a.name))}</b></div>`}</div>
+    <div class="t">${esc(a.name)}</div>
+    <div class="s">${esc(a.artists.map((x) => x.name).join(", "))}</div>
+    <div class="s">${esc(a.platform)}${a.year ? " · " + a.year : ""} · ${a.songs} tracks · ${fmt(a.duration)}</div></a>`;
+}
+
+// --- album ----------------------------------------------------------------------------------
+async function viewAlbum(v, id) {
+  const a = await api("album/" + encodeURIComponent(id));
+  const stateChip = { untouched: ["ok", "generated, untouched"], edited: ["warn", "edited by hand"],
+    legacy: ["warn", "older version"], missing: ["bad", "missing"] }[a.toml_state];
+  v.innerHTML = `
+    <div class="ahead">
+      <div class="cover" ${a.cover ? `style="background-image:url('/api/cover/${a.id}')"` : ""}>
+        ${a.cover ? "" : `<div class="ph">${esc(a.platform)}<br><b>${esc(initials(a.name))}</b></div>`}</div>
+      <div>
+        <p class="muted" style="margin:0"><a class="link" href="#/library?platform=${encodeURIComponent(a.platform)}">${esc(a.platform)}</a>${a.year ? " · " + a.year : ""}</p>
+        <h1 style="font-size:28px">${esc(a.name)}</h1>
+        <p>${a.artists.map((x) => `<a class="link" href="#/library?artist=${x.id}">${esc(x.name)}</a>`).join(", ")}</p>
+        <div class="chips">
+          ${a.region ? `<span class="chip">${esc(a.region)}</span>` : ""}
+          ${a.chips.map((c) => `<span class="chip">${esc(c)}</span>`).join("")}
+          <span class="chip">${a.songs} tracks · ${fmt(a.duration)}</span></div>
+        <p class="mono muted">${esc(a.game_key)}</p>
+      </div>
+    </div>
+    <div class="two">
+      <section class="card"><h2>Tracks</h2>
+        <table><thead><tr><th></th><th>#</th><th>Title</th><th>Engine</th><th style="text-align:right">Length</th></tr></thead>
+        <tbody>${a.tracks.map((t, i) => `<tr data-id="${t.id}" class="${t.id === playingId ? "playing" : ""}">
+          <td style="width:40px"><button class="play" data-i="${i}" title="Play">▶</button></td>
+          <td class="num">${t.track}</td>
+          <td>${esc(t.title)}${t.artist && t.artist !== a.artists.map((x) => x.name).join(", ") ? `<div class="muted">${esc(t.artist)}</div>` : ""}
+            <div class="mono muted">${esc(t.file)}${t.sub ? " #" + t.sub : ""}</div></td>
+          <td class="muted">${esc(t.engine)}</td><td class="len">${fmt(t.duration)}</td></tr>`).join("")}</tbody></table>
+      </section>
+      <section class="card"><h2>album.toml</h2>
+        <div class="row" style="justify-content:space-between;margin-bottom:10px">
+          <span class="chip ${stateChip[0]}">${stateChip[1]}</span>
+          <span class="mono muted" title="${esc(a.toml_path || "")}">${esc((a.toml_path || "").split("/").slice(-2).join("/"))}</span></div>
+        <textarea id="toml" spellcheck="false" wrap="off" ${a.writable ? "" : "readonly"}>${esc(a.toml)}</textarea>
+        <div class="row" style="margin-top:12px">
+          <button class="primary" id="save" ${a.writable ? "" : "disabled"}>Save</button>
+          <button id="revert">Revert</button>
+          <span style="flex:1"></span>
+          <button class="danger" id="regen" ${a.writable ? "" : "disabled"}>Regenerate…</button></div>
+        <p class="muted" style="margin-top:12px">Saving marks the file as edited, so it is never overwritten automatically.
+          Changes show up in Music Assistant after its next sync.</p>
+      </section>
+    </div>`;
+  v.querySelectorAll("button.play").forEach((b) => (b.onclick = () => play(a.tracks[+b.dataset.i], a.name)));
+  $("#revert").onclick = () => ($("#toml").value = a.toml);
+  $("#save").onclick = async () => {
+    try {
+      await api(`album/${a.id}/toml`, { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" },
+        body: $("#toml").value });
+      toast("Saved; re-indexing"); setTimeout(route, 1200);
+    } catch (e) { toast(e.message, true); }
+  };
+  $("#regen").onclick = () => {
+    modal(`<h1>Regenerate album.toml?</h1>
+      <p>A fresh file is generated from tags, playlists and file names.</p>
+      ${a.toml_state === "edited" || a.toml_state === "legacy" ? `<div class="warnbox">This file has been edited.
+        Your version is moved to <span class="mono">/meta/.backup/</span> and stops applying.</div>` : ""}
+      <div class="row" style="justify-content:flex-end;margin-top:16px">
+        <button onclick="closeModal()">Cancel</button><button class="danger" id="go">Regenerate</button></div>`);
+    $("#go").onclick = async () => {
+      try { await api(`album/${a.id}/regenerate`, { method: "POST" }); closeModal();
+        toast("Regenerated; re-indexing"); setTimeout(route, 1200);
+      } catch (e) { closeModal(); toast(e.message, true); }
+    };
+  };
+}
+
+// --- catalog --------------------------------------------------------------------------------
+async function viewCatalog(v) {
+  const c = await api("catalog");
+  const editions = Object.entries(c.editions || {});
+  v.innerHTML = `
+    <h1>Catalog</h1>
+    <p class="muted">${c.catalog.files ?? 0} files, ${c.catalog.hashed ?? 0} hashed${c.hashing ? " (hashing…)" : ""}.</p>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <section class="card"><h2>Hidden duplicates</h2>
+        <p class="muted">Files with identical content are shown once. The first in alphabetical order is kept.</p>
+        ${c.hidden_duplicates.length ? `<table><thead><tr><th>Hidden</th><th>Kept</th></tr></thead><tbody>
+          ${c.hidden_duplicates.map((d) => `<tr><td class="mono">${esc(d.hidden)}</td><td class="mono muted">${esc(d.kept)}</td></tr>`).join("")}
+          </tbody></table>` : `<p>None.</p>`}
+      </section>
+      <section class="card"><h2>Same game key</h2>
+        <p class="muted">Albums that the catalog considers the same release (same console, title, region and sound chips).</p>
+        ${editions.length ? editions.map(([k, names]) => `<div style="margin-bottom:8px"><div class="mono muted">${esc(k)}</div>
+          ${names.map((n) => `<div>${esc(n)}</div>`).join("")}</div>`).join("") : `<p>None.</p>`}
+      </section>
+    </div>
+    <section class="card" style="margin-top:16px"><h2>All albums</h2>
+      <table><thead><tr><th>Album</th><th>Console</th><th>Region</th><th>Chips</th><th>Game key</th></tr></thead><tbody>
+      ${c.albums.slice(0, 500).map((a) => `<tr><td>${esc(a.name)}</td><td>${esc(a.platform)}</td><td>${esc(a.region)}</td>
+        <td>${esc(a.chips.join(", "))}</td><td class="mono muted">${esc(a.game_key)}</td></tr>`).join("")}
+      </tbody></table>${c.albums.length > 500 ? `<p class="muted">Showing 500 of ${c.albums.length}.</p>` : ""}</section>`;
+}
+
+api("status").then((s) => ($("#ver").textContent = "v" + s.version)).catch(() => {});
+route();
+</script>
+</body>
+</html>
