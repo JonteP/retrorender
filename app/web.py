@@ -12,6 +12,7 @@ Routes (all require HTTP Basic auth with the [web] or [subsonic] credentials):
   GET  /api/regenerate-all?path=  preview of a forced regeneration (no changes)
   POST /api/album/<id>/toml       save album.toml (body = TOML text, validated)
   POST /api/album/<id>/regenerate regenerate one album.toml (edited file is backed up)
+  POST /api/album/<id>/titles     save the album's titles.toml (file name -> track title)
   POST /api/regenerate-all?path=  forced regeneration (everything backed up first)
   POST /api/rescan                re-index now
 """
@@ -22,6 +23,7 @@ import hmac
 import json
 import logging
 import threading
+import re
 import tomllib
 from pathlib import Path
 from urllib.parse import quote
@@ -100,6 +102,8 @@ class WebUI:
                 return h._json(self.album(al)) or True
             if action == "toml" and post:
                 return h._json(*self.save_toml(al, h)) or True
+            if action == "titles" and post:
+                return h._json(*self.save_titles(al, h)) or True
             if action == "regenerate" and post:
                 return h._json(self.regenerate(al)) or True
         if name == "cover" and len(parts) >= 2:
@@ -188,8 +192,15 @@ class WebUI:
             toml_text = p.read_text("utf-8")
             ver, untouched = gen_status(toml_text)
             state = "untouched" if untouched else ("edited" if ver is not None else "legacy")
+        titles_text = ""
+        tp = self.meta.titles_path(al.key)
+        m = re.search(r"Title map: built-in title map (\S+\.toml)", toml_text)
+        builtin = m.group(1) if m else ""
+        if tp and tp.is_file():
+            titles_text = tp.read_text("utf-8")
         d = self._album_brief(al)
-        d.update(tracks=tracks, key=al.key, game_key=al.game_key, chips=al.chips,
+        d.update(titles=titles_text, titles_builtin=builtin, titles_template=self._titles_template(al),
+                 tracks=tracks, key=al.key, game_key=al.game_key, chips=al.chips,
                  toml=toml_text, toml_state=state, toml_path=str(p) if p else None,
                  writable=self.meta.writable)
         return d
@@ -263,11 +274,18 @@ class WebUI:
                 if a.first_file.startswith(local_dir.rstrip("/") + "/")]
 
     # --- changes -------------------------------------------------------------------------
+    @staticmethod
+    def _body(h) -> str:
+        raw = getattr(h, "_raw_body", None)         # already read as a form post
+        if raw is None:
+            n = int(h.headers.get("Content-Length") or 0)
+            raw = h.rfile.read(n) if n else b""
+        return raw.decode("utf-8", "replace")
+
     def save_toml(self, al, h):
         if not self.meta.writable:
             return {"error": "the meta folder is not writable"}, 403
-        n = int(h.headers.get("Content-Length") or 0)
-        text = h.rfile.read(n).decode("utf-8") if n else ""
+        text = self._body(h)
         try:
             tomllib.loads(text)
         except tomllib.TOMLDecodeError as e:
@@ -285,6 +303,48 @@ class WebUI:
         log.info("saved %s from the web UI", p)
         threading.Thread(target=self.lib.scan, daemon=True).start()
         return {"ok": True, "message": "saved; re-indexing"}, 200
+
+    def _titles_template(self, al) -> str:
+        from txtp import base_and_options
+        ix = self.lib.index
+        keys = []
+        for sid in al.songs:
+            s = ix.songs.get(sid)
+            if s:
+                k = base_and_options(Path(s.rel).name)[0]
+                if k not in keys:
+                    keys.append(k)
+        lines = ["# Track titles for this album, keyed by internal file name (case-insensitive,",
+                 "# without extension and TXTP options). This file is yours; retrorender never",
+                 "# overwrites it. Saving regenerates an untouched album.toml.", "", "[titles]"]
+        lines += [f'{k} = ""' for k in keys]
+        return "\n".join(lines) + "\n"
+
+    def save_titles(self, al, h):
+        if not self.meta.writable:
+            return {"error": "the meta folder is not writable"}, 403
+        text = self._body(h)
+        try:
+            d = tomllib.loads(text)
+        except tomllib.TOMLDecodeError as e:
+            return {"error": f"invalid TOML: {e}"}, 422
+        if not isinstance(d.get("titles", {}), dict):
+            return {"error": "[titles] must be a table"}, 422
+        tp = self.meta.titles_path(al.key)
+        tp.parent.mkdir(parents=True, exist_ok=True)
+        tmp = tp.with_suffix(".tmp")
+        tmp.write_text(text, "utf-8")
+        tmp.replace(tp)
+        edited = not self.meta.untouched(al.key) and self.meta.path_for(al.key).is_file()
+        if not edited:
+            f = self.lib.root / al.first_file
+            eng, tracks = self.probe(f)
+            self.meta.delete(al.key)
+            self.lib.ensure_meta(al.key, f, eng, tracks)
+        threading.Thread(target=self.lib.scan, daemon=True).start()
+        msg = ("saved; album.toml is edited by hand, so it was kept — regenerate it to use the titles"
+               if edited else "saved; album.toml regenerated, re-indexing")
+        return {"ok": True, "edited": edited, "message": msg}, 200
 
     def regenerate(self, al) -> dict:
         if not self.meta.writable:

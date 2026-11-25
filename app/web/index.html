@@ -206,7 +206,7 @@ window.addEventListener("hashchange", () => { closeModal(); route(); });
 // --- overview -------------------------------------------------------------------------------
 async function viewOverview(v) {
   const s = await api("status");
-  $("#ver").textContent = "v" + s.version;
+  $("#ver").textContent = verText(s);
   const ix = s.index, cat = s.catalog || {};
   const built = ix.built ? new Date(ix.built * 1000).toLocaleString() : "–";
   v.innerHTML = `
@@ -219,6 +219,7 @@ async function viewOverview(v) {
         <div class="stat"><span>Tracks</span><b>${ix.songs}</b></div>
         <div class="stat"><span>Last indexed</span><b>${esc(built)}</b></div>
         <div class="stat"><span>Status</span><b>${ix.scanning ? "indexing…" : ix.hashing ? "hashing…" : "idle"}</b></div>
+        <div class="stat"><span>Build</span><b class="mono">${esc(s.build?.commit || "local")}${s.build?.date ? " · " + esc(new Date(s.build.date).toLocaleString()) : ""}</b></div>
       </div>
       <div class="card"><h2>Engines</h2>
         <div class="chips">${s.engines.map((e) => `<span class="chip ok">${esc(e)}</span>`).join("")}
@@ -356,8 +357,23 @@ async function viewAlbum(v, id) {
         <p class="muted" style="margin-top:12px">Saving marks the file as edited, so it is never overwritten automatically.
           Changes show up in Music Assistant after its next sync.</p>
       </section>
+      <section class="card"><h2>Title map</h2>
+        <p class="muted">${a.titles_builtin ? `Built-in map in use: <span class="mono">${esc(a.titles_builtin)}</span>. ` : ""}
+          Titles you enter here (per internal file name) win over ${a.titles_builtin ? "the built-in map, " : ""}tags and file names.
+          Empty values are ignored.</p>
+        <textarea id="titles" style="min-height:180px" spellcheck="false" wrap="off" ${a.writable ? "" : "readonly"}>${esc(a.titles || a.titles_template)}</textarea>
+        <div class="row" style="margin-top:12px">
+          <button class="primary" id="saveTitles" ${a.writable ? "" : "disabled"}>Save titles</button></div>
+      </section>
     </div>`;
   v.querySelectorAll("button.play").forEach((b) => (b.onclick = () => play(a.tracks[+b.dataset.i], a.name)));
+  $("#saveTitles").onclick = async () => {
+    try {
+      const r = await api(`album/${a.id}/titles`, { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" },
+        body: $("#titles").value });
+      toast(r.message, r.edited); setTimeout(route, 1500);
+    } catch (e) { toast(e.message, true); }
+  };
   $("#revert").onclick = () => ($("#toml").value = a.toml);
   $("#save").onclick = async () => {
     try {
@@ -506,7 +522,8 @@ function remoteRow(r) {
     <td class="len">${esc(r.size)}</td><td class="actions">${actions}</td></tr>`;
 }
 
-api("status").then((s) => ($("#ver").textContent = "v" + s.version)).catch(() => {});
+const verText = (s) => `v${s.version} · ${s.build?.commit || "local"}`;
+api("status").then((s) => ($("#ver").textContent = verText(s))).catch(() => {});
 route();
 </script>
 </body>

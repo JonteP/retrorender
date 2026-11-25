@@ -45,6 +45,11 @@ COPY config.toml /config/config.toml
 # Läsbart för alla oavsett rättigheter/ACL på värdens filer (appen kör som 568)
 RUN chmod -R a+rX /app /config
 
+# Filled in by GitHub Actions, shown in /health and the web UI
+ARG BUILD_COMMIT=local
+ARG BUILD_DATE=
+ENV RETRO_BUILD_COMMIT=$BUILD_COMMIT \
+    RETRO_BUILD_DATE=$BUILD_DATE
 ENV RETRO_CONFIG=/config/config.toml \
     RETRO_LIBRARY=/library \
     RETRO_PORT=8090 \

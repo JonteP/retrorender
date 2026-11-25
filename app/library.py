@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from catalog import game_key, normalize_title, region_of
+from txtp import hidden_in
 from meta import MetaStore
 from policy import plan, settings_for
 
@@ -155,15 +156,19 @@ class Library:
         """Läser album.toml, och genererar den först om den saknas."""
         if not self.meta.enabled:
             return None
-        if self.meta.writable and self.meta.outdated_untouched(key):
-            log.info("uppdaterar orörd %s (äldre generering)", key)
+        if self.meta.writable and (self.meta.outdated_untouched(key) or (
+                self.meta.titles_newer(key) and self.meta.untouched(key))):
+            log.info("uppdaterar orörd %s (äldre generering eller ny titles.toml)", key)
             self.meta.delete(key)
         if not self.meta.exists(key) and self.meta.writable:
             if key.startswith("file:"):
                 items = [(f, t, len(tracks)) for t in tracks]
             else:
                 items = []
+                hidden = hidden_in(f.parent)
                 for g in sorted(f.parent.iterdir(), key=lambda p: p.name.lower()):
+                    if g.name.lower() in hidden:
+                        continue
                     if g.is_file() and self.reg.engine_hint(g) not in (None, "saknas"):
                         try:
                             _, ts = self.probe(g)
@@ -171,7 +176,7 @@ class Library:
                             continue
                         if len(ts) == 1:
                             items.append((g, ts[0], 1))
-            self.meta.generate(key, f.parent, items)
+            self.meta.generate(key, f.parent, items, platform=self.platform_for(f))
         return self.meta.load(key)
 
     def resolve(self, f: Path, sub: int, query: dict | None = None):
@@ -290,6 +295,12 @@ class Library:
     def platform_name(self, folder: str) -> str:
         return str(self.cfg.get("platforms", {}).get(folder, folder))
 
+    def platform_for(self, f: Path) -> str:
+        parts = f.relative_to(self.root).parts
+        if len(parts) > 3 and parts[0] == "_synced" and parts[1] == "joshw":
+            return self.synced_platform(parts[2])
+        return self.platform_name(parts[0]) if parts else ""
+
     def synced_platform(self, system: str) -> str:
         """Console name for a synced source folder; replaced by the server (joshw names)."""
         return system
@@ -303,7 +314,10 @@ class Library:
                 dirs.setdefault(f.parent, []).append(f)
         for d in sorted(dirs, key=lambda p: str(p).lower()):
             dir_album = None
+            hidden = hidden_in(d)        # files played through a .txtp are not tracks themselves
             for f in sorted(dirs[d], key=lambda p: p.name.lower()):
+                if f.name.lower() in hidden:
+                    continue
                 try:
                     eng, tracks = self.probe(f)
                 except Exception as e:
