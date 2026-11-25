@@ -1,0 +1,17 @@
+# TrueNAS SCALE: Apps -> Discover Apps -> Custom App -> Install via YAML
+# Change the paths under volumes to match your datasets.
+services:
+  retrorender:
+    # Image built by GitHub Actions; lowercase owner name is required by ghcr.io
+    image: ghcr.io/jontep/retrorender:latest
+    pull_policy: always
+    container_name: retrorender
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      - /mnt/tank/media/retro:/library:ro               # the library, read-only
+      - /mnt/tank/apps/retrorender/meta:/meta           # album.toml, writable (include in backups)
+      - /mnt/tank/apps/retrorender/config.toml:/config/config.toml:ro
+    environment:
+      TZ: Europe/Stockholm

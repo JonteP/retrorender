@@ -1,0 +1,70 @@
+# retrorender settings. Edit and restart the container.
+
+library = "/library"
+# Writable folder for album.toml files (titles, order, loops). Generated automatically.
+meta_dir = "/meta"
+# Backups of album.toml (made on regeneration) are kept in /meta/.backup for this many days
+meta_backup_days = 90
+port = 8090
+sample_rate = 44100
+
+[engines]
+vgmstream_cli = "vgmstream-cli"
+sidplayfp_cli = "sidplayfp"
+vgm2wav_cli = "vgm2wav"
+# Arguments for vgm2wav. {in} = file, {loops} = loop count, {rate} = sample rate.
+# If the flags don't match your version, compare with vgm2wav_help in /health and edit here.
+vgm2wav_args = ["--loops={loops}", "--samplerate={rate}", "{in}", "-"]
+# Engine for VGM/VGZ: "auto" = libgme for Sega-only files, libvgm for the rest.
+# "libvgm" = libvgm for all VGM files, "gme" = libgme for all.
+vgm_engine = "auto"
+# HVSC song length database for SID (in HVSC under DOCUMENTS/)
+songlengths = "/library/C64/HVSC/DOCUMENTS/Songlengths.md5"
+# STIL.txt (subtune names) is found automatically next to Songlengths; otherwise set:
+# stil = "/library/C64/HVSC/DOCUMENTS/STIL.txt"
+
+# Display names for consoles (shown as genre in MA). Key = folder name in the library.
+# An album can override this with platform = "..." in its album.toml.
+[platforms]
+MegaDrive = "Sega Mega Drive"
+X68000 = "Sharp X68000"
+Wii = "Nintendo Wii"
+GameCube = "Nintendo GameCube"
+NES = "Nintendo NES"
+SNES = "Super Nintendo"
+GameBoy = "Nintendo Game Boy"
+C64 = "Commodore 64"
+Amiga = "Commodore Amiga"
+ZXSpectrum = "ZX Spectrum"
+PCEngine = "NEC PC Engine"
+MSX = "MSX"
+
+# Applies to all tracks unless something more specific says otherwise.
+[defaults]
+loops = 2          # number of times the loop is played
+min_s = 30         # looping tracks play at least this long
+max_s = 600        # no track plays longer than this
+default_s = 180    # when the length is completely unknown
+fade_s = 8         # fade-out when a track is cut
+
+# Per engine
+[engine.openmpt]
+loops = 1          # tracker modules: one play-through is usually enough
+
+[engine.sidplay]
+default_s = 240
+
+# Per file extension (overrides engine)
+[ext.spc]
+loops = 2
+fade_s = 10
+
+[ext.nsf]
+default_s = 150
+
+# Subsonic API for Music Assistant's OpenSubsonic provider (and Subsonic apps)
+[subsonic]
+enabled = true
+user = "musicassistant"
+password = "byt-mig"
+rescan_minutes = 60     # how often the library is re-indexed
