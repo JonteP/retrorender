@@ -42,3 +42,17 @@ text = ms.path_for(key).read_text()
 assert 'title = "Gusty Garden (mine)"' in text, text
 assert "Beach Bowl Galaxy (channels 1,2)" in text   # rest still from the built-in map
 print("ok")
+
+# empty TXTPs with different commands must not count as duplicates
+from catalog import Catalog  # noqa: E402
+cat = Catalog(tmp / "c.sqlite")
+rels = []
+for n in ["SMG_galaxy03_multi.ast#C1,2.txtp", "SMG_galaxy03_multi.ast#C3,4.txtp"]:
+    rel = str((album / n).relative_to(lib))
+    cat.db.execute("INSERT INTO files (path, size, mtime) VALUES (?, 0, 0)", (rel,))
+    rels.append(rel)
+cat.db.commit()
+cat.hash_missing(lib)
+assert cat.sha1(rels[0]) != cat.sha1(rels[1])
+assert not cat.duplicate_groups()
+print("ok: txtp checksums")
