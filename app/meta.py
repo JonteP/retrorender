@@ -15,6 +15,8 @@ import logging
 import re
 import tomllib
 from dataclasses import replace
+
+from txtp import base_and_options, describe_options
 from datetime import date, datetime
 from pathlib import Path
 
@@ -24,7 +26,7 @@ POLICY_KEYS = ("loops", "min_s", "max_s", "default_s", "fade_s")
 
 # Höjs när genereringen blir bättre. Filer som är ORÖRDA (innehållet matchar
 # kontrollsumman i första raden) och har en lägre version genereras om automatiskt.
-GEN_VERSION = 3
+GEN_VERSION = 4
 _MARK = "# retrorender-gen"
 
 
@@ -164,12 +166,64 @@ def clean_filename(stem: str) -> tuple[int | None, str]:
     return num, rest or stem
 
 
+# --- title maps ---------------------------------------------------------------------------
+TITLEMAP_DIR = Path(__file__).parent / "titlemaps"
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+
+class TitleMaps:
+    """Built-in title maps (app/titlemaps/*.toml): internal file names -> track titles,
+    matched on album title and console. Users can add their own per album (titles.toml)."""
+
+    def __init__(self, folder: Path = TITLEMAP_DIR):
+        self.maps = []
+        for f in sorted(folder.glob("*.toml")) if folder.is_dir() else []:
+            try:
+                d = tomllib.loads(f.read_text("utf-8"))
+            except (OSError, tomllib.TOMLDecodeError) as e:
+                log.warning("title map %s: %s", f.name, e)
+                continue
+            m = d.get("match", {})
+            self.maps.append({
+                "file": f.name,
+                "titles": {_norm(t) for t in m.get("titles", [])},
+                "platforms": {_norm(p) for p in m.get("platforms", [])},
+                "map": {str(k).lower(): str(v) for k, v in d.get("titles", {}).items()},
+            })
+
+    def lookup(self, album_title: str, platform: str) -> tuple[dict, str]:
+        p = _norm(platform)
+        # also try without "(date)(dev)" / "[alt]" parts, as in joshw archive names
+        bare = re.sub(r"\s*[\(\[][^\)\]]*[\)\]]", "", album_title or "")
+        cands = {_norm(album_title), _norm(bare)} - {""}
+        for m in self.maps:
+            if cands & m["titles"] and (not m["platforms"] or p in m["platforms"]):
+                return m["map"], f"built-in title map {m['file']}"
+        return {}, ""
+
+
+def load_user_titles(path: Path | None) -> dict:
+    if not path or not path.is_file():
+        return {}
+    try:
+        d = tomllib.loads(path.read_text("utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as e:
+        log.warning("titles file %s: %s", path, e)
+        return {}
+    # empty values (as in the web UI template) mean "no title yet"
+    return {str(k).lower(): str(v) for k, v in d.get("titles", {}).items() if str(v).strip()}
+
+
 class MetaStore:
     def __init__(self, meta_root: Path | None, library_root: Path):
         self.root = meta_root
         self.lib = library_root
         self.enabled = bool(meta_root)
         self._cache: dict[str, tuple[float, dict]] = {}
+        self.titlemaps = TitleMaps()
         if self.enabled:
             try:
                 meta_root.mkdir(parents=True, exist_ok=True)
@@ -194,6 +248,20 @@ class MetaStore:
             return self.root / rel / "album.toml"
         return self.root / (rel + ".album.toml")
 
+    def titles_path(self, album_key: str) -> Path | None:
+        """User-owned title map for an album (never generated or overwritten)."""
+        if not self.enabled:
+            return None
+        kind, rel = album_key.split(":", 1)
+        if kind == "dir":
+            return self.root / rel / "titles.toml"
+        return self.root / (rel + ".titles.toml")
+
+    def titles_newer(self, album_key: str) -> bool:
+        tp, ap = self.titles_path(album_key), self.path_for(album_key)
+        return bool(tp and ap and tp.is_file() and ap.is_file()
+                    and tp.stat().st_mtime > ap.stat().st_mtime)
+
     def load(self, album_key: str) -> dict | None:
         p = self.path_for(album_key)
         if p is None or not p.is_file():
@@ -213,6 +281,16 @@ class MetaStore:
     def exists(self, album_key: str) -> bool:
         p = self.path_for(album_key)
         return bool(p and p.exists())
+
+    def untouched(self, album_key: str) -> bool:
+        p = self.path_for(album_key)
+        if not (p and p.is_file()):
+            return False
+        try:
+            ver, ok = gen_status(p.read_text("utf-8"))
+        except OSError:
+            return False
+        return ver is not None and ok
 
     def outdated_untouched(self, album_key: str) -> bool:
         """Sann om filen är genererad av en äldre version och inte har ändrats för hand."""
@@ -286,8 +364,9 @@ class MetaStore:
         return False
 
     # --- generering ---------------------------------------------------------------
-    def generate(self, album_key: str, album_dir: Path, items: list) -> str:
-        """items: lista av (Path, TrackInfo, n_subtracks). Skriver bara om filen saknas."""
+    def generate(self, album_key: str, album_dir: Path, items: list, platform: str = "") -> str:
+        """items: lista av (Path, TrackInfo, n_subtracks). Skriver bara om filen saknas.
+        Title priority: user titles.toml > built-in title map > tags > sidecars > file name."""
         side_album, side_files, side_nez = parse_sidecars(album_dir)
         nez_file = None
         if album_key.startswith("file:"):
@@ -297,14 +376,36 @@ class MetaStore:
                 order = {e["sub"]: i for i, e in enumerate(nez_file)}
                 items = sorted((it for it in items if it[1].index in order),
                                key=lambda it: order[it[1].index])
-        stats = {"tags": 0, "sidecar": 0, "filename": 0}
+        stats = {"title map": 0, "tags": 0, "sidecar": 0, "filename": 0}
+        # title maps: the user's own titles.toml wins; otherwise a built-in map matched on
+        # the album's likely title (playlist/source title, tags, or folder name) and console
+        guess = (side_album.get("album") or side_album.get("title")
+                 or next((t.game for _, t, _ in items if t.game), "") or album_dir.name)
+        user_map = load_user_titles(self.titles_path(album_key))
+        builtin_map, builtin_src = self.titlemaps.lookup(guess, platform)
+        tmap = {**builtin_map, **user_map}               # your entries override built-in ones
+        tmap_src = " + ".join(x for x in ((builtin_src, "titles.toml" if user_map else "")) if x)
+        bases: dict[str, int] = {}
+        for f, t, n in items:
+            bases[base_and_options(f.name)[0]] = bases.get(base_and_options(f.name)[0], 0) + 1
         tracks_out = []
         games, authors, years = [], [], []
         for f, t, n in items:
             num, nice = clean_filename(f.stem)
             side = side_files.get(f.name, {})
             nzp = next((e for e in (nez_file or []) if e["sub"] == t.index), None)
-            if n > 1 and nzp and nzp.get("title"):           # NEZplug-spellista
+            base, opts = base_and_options(f.name)
+            if f.suffix.lower() == ".txtp":             # 'X.ast#C1,2.txtp' -> 'X (channels 1,2)'
+                num, nice = clean_filename(Path(f.name.split("#")[0]).stem if "#" in f.name else f.stem)
+                if opts:
+                    nice += f" ({describe_options(opts)})"
+                if t.title and ("#" in t.title or t.title.lower().endswith((".txtp", ".ast"))):
+                    t = replace(t, title="")
+            if n == 1 and base in tmap:                       # title map (user or built-in)
+                title, src, track_no = tmap[base], "title map", num
+                if opts and bases.get(base, 0) > 1:
+                    title += f" ({describe_options(opts)})"
+            elif n > 1 and nzp and nzp.get("title"):           # NEZplug-spellista
                 title, src = nzp["title"], "sidecar"
                 track_no = (nez_file.index(nzp) + 1)
             elif n > 1:                                       # delspår i en fil
@@ -312,7 +413,7 @@ class MetaStore:
                 if not title or re.fullmatch(r".* \(\d+\)", title or ""):
                     title, src = f"{nice} {t.index + 1}" if n > 1 else nice, "filename"
                 track_no = t.index + 1
-            elif t.title and t.title != f.stem:
+            elif t.title and t.title not in (f.stem, f.name):
                 title, src, track_no = t.title, "tags", num
             elif side.get("title"):
                 title, src, track_no = side["title"], "sidecar", num
@@ -365,7 +466,8 @@ class MetaStore:
                 years.append(int(yr.group(0)))
 
         L = [f"# Generated by retrorender on {date.today().isoformat()}.",
-             "# Sources: " + ", ".join(f"{k} ({v})" for k, v in stats.items()) + ".",
+             "# Sources: " + ", ".join(f"{k} ({v})" for k, v in stats.items() if v) + "."
+             + (f" Title map: {tmap_src}." if stats["title map"] else ""),
              "# Edit freely. While this file is untouched it is updated automatically when",
              "# generation improves; once you change anything it is never overwritten.",
              "# To regenerate manually: delete the file or use /meta/regenerate.",

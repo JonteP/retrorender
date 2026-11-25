@@ -27,6 +27,28 @@ Containern läser biblioteket skrivskyddat och kör som användaren `apps` (568)
 
 `/health` och webbgränssnittet (uppe till höger, och under Overview → Build) visar versionsnumret plus den commit imagen byggdes från. Den ska stämma med senaste commit på `main` på GitHub (de sju första tecknen). Visar den ett äldre värde är imagen inte uppdaterad. Vänta tills Actions-bygget är klart och starta om appen igen.
 
+## TXTP och titelkartor (nytt i v0.9)
+
+**TXTP.** Rippar från GameCube/Wii har ofta `.txtp`-filer som säger åt vgmstream hur ett spår
+ska spelas (t.ex. `SMG_galaxy03_multi.ast#C1,2.txtp` = kanal 1–2 ur en flerlagersfil). När en
+mapp har TXTP-filer är det de som blir spår; filerna de pekar på döljs, så låtar inte dyker upp
+dubbelt. Flera TXTP mot samma fil får ett tillägg i titeln, t.ex. "Beach Bowl Galaxy (channels 1,2)".
+
+**Titelkartor.** Interna filnamn (`SMG_galaxy14_strm`) säger inget, och taggar saknas.
+En titelkarta översätter filnamn till låttitlar. Två sorter:
+
+- *Inbyggda* i `app/titlemaps/*.toml`, matchade på albumtitel och konsol. Super Mario Galaxy
+  (Wii) finns med (från Luma's Workshop). Fler kan läggas till via PR.
+- *Egna*, i albumets meta-mapp som `titles.toml` (fältet "Title map" på albumsidan i
+  webbgränssnittet). Dina rader vinner över den inbyggda kartan; tomma värden ignoreras.
+  Filen är din och skrivs aldrig över.
+
+Prioritet för titlar: egen titles.toml > inbyggd karta > taggar > sidofiler > filnamn.
+Orörda album.toml genereras om automatiskt (generation 4) och när titles.toml ändras.
+Om album.toml är handredigerad behålls den; använd Regenerate för att få in titlarna.
+
+BMS-filer (sekvenserad JAudio-musik), `.bns`, `.thp`, `.aw` och `.baa` hanteras inte ännu.
+
 ## joshw.info (nytt i v0.8)
 
 Vyn **joshw** i webbgränssnittet listar spelen för de konsoler som står i `[joshw] systems` i config.toml (`wii`, `gcn`, `nsf`, …). Titel, år, utvecklare och utgivare läses ur arkivnamnen. Inget laddas ned förrän du väljer:

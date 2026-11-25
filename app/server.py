@@ -42,7 +42,7 @@ from policy import plan, settings_for, shape
 from subsonic import Subsonic
 from web import WebUI
 
-VERSION = "0.8.1"
+VERSION = "0.9.0"
 BUILD = {"commit": os.environ.get("RETRO_BUILD_COMMIT", "local")[:7],
          "date": os.environ.get("RETRO_BUILD_DATE", "")}
 
@@ -127,7 +127,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.command == "POST":
             n = int(self.headers.get("Content-Length") or 0)
             if n and "form-urlencoded" in (self.headers.get("Content-Type") or ""):
-                form = parse_qs(self.rfile.read(n).decode("utf-8", "replace"))
+                self._raw_body = self.rfile.read(n)       # kept for handlers that want the body
+                form = parse_qs(self._raw_body.decode("utf-8", "replace"))
                 for k, v in form.items():
                     q.setdefault(k, v[-1])     # query-parametrar vinner
         return q

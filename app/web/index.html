@@ -357,8 +357,23 @@ async function viewAlbum(v, id) {
         <p class="muted" style="margin-top:12px">Saving marks the file as edited, so it is never overwritten automatically.
           Changes show up in Music Assistant after its next sync.</p>
       </section>
+      <section class="card"><h2>Title map</h2>
+        <p class="muted">${a.titles_builtin ? `Built-in map in use: <span class="mono">${esc(a.titles_builtin)}</span>. ` : ""}
+          Titles you enter here (per internal file name) win over ${a.titles_builtin ? "the built-in map, " : ""}tags and file names.
+          Empty values are ignored.</p>
+        <textarea id="titles" style="min-height:180px" spellcheck="false" wrap="off" ${a.writable ? "" : "readonly"}>${esc(a.titles || a.titles_template)}</textarea>
+        <div class="row" style="margin-top:12px">
+          <button class="primary" id="saveTitles" ${a.writable ? "" : "disabled"}>Save titles</button></div>
+      </section>
     </div>`;
   v.querySelectorAll("button.play").forEach((b) => (b.onclick = () => play(a.tracks[+b.dataset.i], a.name)));
+  $("#saveTitles").onclick = async () => {
+    try {
+      const r = await api(`album/${a.id}/titles`, { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" },
+        body: $("#titles").value });
+      toast(r.message, r.edited); setTimeout(route, 1500);
+    } catch (e) { toast(e.message, true); }
+  };
   $("#revert").onclick = () => ($("#toml").value = a.toml);
   $("#save").onclick = async () => {
     try {

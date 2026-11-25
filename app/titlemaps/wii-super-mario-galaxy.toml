@@ -1,0 +1,91 @@
+# Title map: internal stream names -> track titles.
+# Source: Luma's Workshop, "List of Music" (Super Mario Galaxy),
+# https://www.lumasworkshop.com/wiki/List_of_Music
+# Keys are file names without extension (case-insensitive). Sequenced-only music
+# (BMS without a stream) is not listed, since it isn't playable yet.
+
+[match]
+titles = ["Super Mario Galaxy"]
+platforms = ["Nintendo Wii"]
+
+[titles]
+# General galaxy music
+SMG_galaxy24_multi = "Gateway Galaxy"
+SMG_galaxy25_strm = "Gateway Galaxy 2"
+SMG_galaxy26_strm = "Gateway Galaxy 3"
+SMG_galaxy01_strm = "Good Egg Galaxy"
+SMG_galaxy10_strm = "Honeyhive Galaxy"
+SMG_galaxy10_hurry_strm = "Big Bad Bugaboom"
+SMG_galaxy08_strm = "Space Junk Galaxy"
+SMG_galaxy11_multi = "Battlerock Galaxy"
+SMG_galaxy15_strm = "Bowser's Star Reactor"
+SMG_galaxy15_hurry_strm = "Bowser's Big Staircase"
+SMG_galaxy03_multi = "Beach Bowl Galaxy"
+SMG_galaxy06_strm = "Ghostly Galaxy"
+SMG_galaxy04_multi = "Buoy Base Galaxy"
+SMG_galaxy09_strm = "Bowser Jr.'s Airship Armada"
+SMG_galaxy23_strm = "Drip Drop Galaxy"
+SMG_galaxy14_strm = "Gusty Garden Galaxy"
+SMG_galaxy16_multi = "Freezeflame Galaxy"
+SMG_galaxy19_strm = "Dusty Dune Galaxy"
+SMG_galaxy22_strm = "Toy Time Galaxy"
+SMG_galaxy05_strm = "Deep Dark Galaxy"
+SMG_galaxy02_strm = "Melty Molten Galaxy"
+SMG_galaxy27_strm = "Snow Cap Galaxy"
+SMG_galaxy28_strm = "Bowser's Galaxy Reactor"
+# Miscellaneous stage music
+SMG_galaxy_inter_strm = "Interlude"
+SMG_galaxy01_tomb_strm = "A Tense Moment"
+SMG_galaxy12_strm = "Space Fantasy"
+SMG_galaxy13_strm = "Space Athletic"
+SMG_galaxy17_strm = "Blue Sky Athletic"
+SMG_galaxy02_hurry_strm = "Speedy Comet"
+SMG_galaxy20_strm = "Cosmic Comet"
+SMG_galaxy21_strm = "Purple Comet"
+SMG_galaxy18_strm = "Pipe Interior"
+SMG_ev_kinotan_strm = "Captain Toad's Theme"
+SMG_ev_race_strm = "Surfing Race"
+SMG_ev_race02_multi = "Spooky Race"
+SMG_ev_rabbit_strm = "Star Bunny Theme"
+SMG_ev_kuppabt01_strm = "Bowser Appears"
+SMG_ev_starchance_strm = "A Chance to Grab a Star! 1"
+SMG_ev_starchance02_strm = "A Chance to Grab a Star! 2"
+# Bosses
+SMG_boss03a_strm = "Dino Piranha"
+SMG_boss03b_strm = "Dino Piranha (Fast)"
+SMG_boss01a_strm = "King Kaliente"
+SMG_boss01b_strm = "King Kaliente (Fast)"
+SMG_boss02a_strm = "Megaleg"
+SMG_boss02b_strm = "Megaleg (Fast)"
+SMG_boss04_strm = "Kamella"
+SMG_boss07_multi = "Bowser"
+SMG_boss09a_multi = "Bouldergeist"
+SMG_boss09b_multi = "Bouldergeist (Fast)"
+SMG_boss06a_strm = "Bowser Jr."
+SMG_boss06b_strm = "Bowser Jr. (Fast)"
+SMG_boss05a_strm = "Major Burrows"
+SMG_boss05b_strm = "Major Burrows (Fast)"
+SMG_boss08_strm = "Mecha-Bowser"
+SMG_boss10_strm = "Final Bowser"
+# Comet Observatory
+SMG_astroout01_strm = "Comet Observatory 1"
+SMG_astroout02_strm = "Comet Observatory 2"
+SMG_astroout03_strm = "Comet Observatory 3"
+SMG_astrodome_multi = "Dome"
+SMG_astrodome02_strm = "Dome (Bowser)"
+SMG_astrodome04_multi = "Dome (Garden)"
+SMG_astrodome03_strm = "Library"
+# Other music
+SMG_title_strm = "Title Music"
+SMG_fileselect_strm = "File Select"
+SMG_staffroll_strm = "Credits"
+SMG_ev_prolo01_strm = "Picture Book"
+SMG_ev_prolo01_b_strm = "Picture Book (Sad)"
+SMG_ev_prolo02_strm = "Mushroom Kingdom"
+SMG_ev_prolo05_strm = "Mushroom Kingdom (After Attack)"
+SMG_ev_epilogue_b_strm = "Star Child"
+SMG_first_astro_strm = "First Grand Star Collected"
+SMG_second_astro_strm = "Another Grand Star Collected"
+# Unused
+SMG_ev_prolo03_strm = "Attack of the Airships (unused)"
+SMG_ev_prolo04_strm = "Catastrophe (unused)"
