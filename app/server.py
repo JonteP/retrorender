@@ -6,6 +6,7 @@ GET /info?path=<fil>[&policyparametrar] delspår, metadata och planerad speltid
 GET /render?path=<fil>&sub=<n>[&fmt=wav|flac][&loops=&min_s=&max_s=&default_s=&fade_s=]
 GET /m3u?path=<mapp eller fil>          spellista med render-URL:er (för VLC m.m.)
 GET /rescan                             indexera om biblioteket nu
+GET /catalog                            katalogstatus: dubbletter (identiska filer), spelnycklar
 GET /meta/show?path=<mapp eller fil>    visa album.toml (genereras om den saknas)
 GET /meta/regenerate?path=<mapp/fil>    generera om en album.toml (redigerad sparas i .backup)
 GET /meta/regenerate-all[?path=<mapp>]  tvingad omgenerering: visar först en varning,
@@ -30,6 +31,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
 from engines import EngineError, Registry
+from catalog import Catalog, chips_for
 from library import Library
 from meta import MetaStore
 from policy import plan, settings_for, shape
@@ -44,19 +46,34 @@ SAMPLE_RATE = int(CFG.get("sample_rate", 44100))
 REG = Registry(CFG)
 
 
-@lru_cache(maxsize=4096)
-def _probe(path: str, mtime: float):
-    eng = REG.for_path(Path(path))
-    return eng, eng.probe(Path(path))
+@lru_cache(maxsize=8192)
+def _probe(path: str, mtime: float, size: int):
+    """Probe a file, using the SQLite catalog as a persistent cache."""
+    P = Path(path)
+    eng = REG.for_path(P)
+    if eng is None:
+        return None, []
+    try:
+        rel = str(P.relative_to(LIBRARY))
+    except ValueError:
+        rel = None
+    tracks = CAT.get_probe(rel, size, mtime, eng.name) if rel else None
+    if tracks is None:
+        tracks = eng.probe(P)
+        if rel:
+            CAT.put_probe(rel, size, mtime, eng.name, tracks, chips_for(P, tracks))
+    return eng, tracks
 
 
 def probe(p: Path):
-    return _probe(str(p), p.stat().st_mtime)
+    st = p.stat()
+    return _probe(str(p), st.st_mtime, st.st_size)
 
 
 _meta_dir = os.environ.get("RETRO_META", CFG.get("meta_dir", "/meta"))
 META = MetaStore(Path(_meta_dir).resolve() if _meta_dir else None, LIBRARY)
-LIB = Library(LIBRARY, REG, CFG, probe, SAMPLE_RATE, META)
+CAT = Catalog(META.root / "catalog.sqlite" if META.writable else None)
+LIB = Library(LIBRARY, REG, CFG, probe, SAMPLE_RATE, META, CAT)
 SUB = Subsonic(LIB, CFG)
 
 
@@ -69,7 +86,7 @@ def wav_header(frames: int, rate: int) -> bytes:
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"
-    server_version = "retrorender/0.5"
+    server_version = "retrorender/0.6"
 
     # --- hjälpare -------------------------------------------------------
     def _q(self) -> dict:
@@ -119,9 +136,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
         try:
             if route == "/health":
-                return self._json({"ok": True, "version": "0.5", "library": str(LIBRARY),
+                return self._json({"ok": True, "version": "0.6", "library": str(LIBRARY),
                                    "meta": {"dir": str(META.root) if META.enabled else None,
                                             "writable": META.writable},
+                                   "catalog": CAT.stats(),
                                    "index": {"scanning": LIB.scanning,
                                              "artists": len(LIB.index.artists),
                                              "albums": len(LIB.index.albums),
@@ -141,6 +159,8 @@ class Handler(BaseHTTPRequestHandler):
             if route == "/rescan":
                 threading.Thread(target=LIB.scan, daemon=True).start()
                 return self._json({"ok": True, "message": "indexering startad"})
+            if route == "/catalog":
+                return self._json(LIB.catalog_report())
             if route == "/meta/show":
                 return self.meta_show(q, regenerate=False)
             if route == "/meta/regenerate":

@@ -1,4 +1,4 @@
-# retrorender v0.5.3
+# retrorender v0.6
 
 Renderar retro- och chiptunefiler i realtid över HTTP. Detta är fas 1 i designdokumentet "Retrobibliotek".
 
@@ -22,6 +22,16 @@ Renderar retro- och chiptunefiler i realtid över HTTP. Detta är fas 1 i design
 5. Kontrollera: `http://<nas-ip>:8090/health` visar vilka motorer som laddades.
 
 Containern läser biblioteket skrivskyddat och kör som användaren `apps` (568).
+
+## Katalog i SQLite (nytt i v0.6)
+
+`/meta/catalog.sqlite` sparar probe-resultat per fil. Vid omstart läses de från databasen i stället för att varje fil probas igen, så länge storlek och ändringstid är oförändrade. Filer som har försvunnit tas bort ur katalogen vid nästa indexering.
+
+- **Identiska filer:** SHA-1 räknas i bakgrunden. Filer med exakt samma innehåll visas bara en gång. Den första i alfabetisk ordning behålls.
+- **Spelnyckel** = konsol + normaliserad titel + region + ljudchip. Regionen läses från taggar som `(Japan)` eller `(USA)` i albumnamn och mappnamn. Ljudchip läses från NSF-headern (VRC6, VRC7, FDS, MMC5, N163, S5B) och från VGM-headern.
+- **Versioner samexisterar:** album med samma namn men olika region eller chip får ett tillägg, t.ex. "Castlevania III (JP, VRC6)" och "Castlevania III (US)".
+- **`/catalog`** visar katalogstatus, identiska filer, dolda dubbletter och spelnycklar per album.
+- Mappar på översta nivån som börjar med `_` eller `.` hoppas över. `_synced` är reserverad för kommande synk.
 
 ## Artister och konsoler (nytt i v0.5)
 

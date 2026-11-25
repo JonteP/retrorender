@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from catalog import game_key, normalize_title, region_of
 from meta import MetaStore
 from policy import plan, settings_for
 
@@ -75,6 +76,10 @@ class Album:
     year: int | None = None
     cover: str | None = None          # absolut sökväg till bild
     songs: list[str] = field(default_factory=list)
+    region: str = ""
+    chips: list = field(default_factory=list)
+    game_key: str = ""
+    first_file: str = ""
 
     @property
     def artist(self) -> str:
@@ -111,6 +116,8 @@ class Index:
         self.albums: dict[str, Album] = {}
         self.songs: dict[str, Song] = {}
         self.genres: dict[str, list[str]] = {}     # konsol -> album-id:n
+        self.by_sha: dict[str, str] = {}           # sha1 -> first song's file (dedupe)
+        self.hidden_duplicates: list[tuple[str, str]] = []
         self.built = 0.0
 
     def artist(self, name: str) -> tuple[str, str]:
@@ -122,13 +129,16 @@ class Index:
 
 class Library:
     def __init__(self, root: Path, registry, cfg: dict, probe, sample_rate: int,
-                 meta: MetaStore):
+                 meta: MetaStore, catalog=None):
         self.root = root
         self.reg = registry
         self.cfg = cfg
         self.probe = probe
         self.sr = sample_rate
         self.meta = meta
+        self.cat = catalog
+        self._seen: list[str] = []
+        self._hashing = False
         self.index = Index()
         self.scanning = False
         self.count = 0
@@ -195,10 +205,20 @@ class Library:
         try:
             self.meta.prune_backups(float(self.cfg.get("meta_backup_days", 90)))
             idx = Index()
-            for d in sorted(p for p in self.root.iterdir() if p.is_dir()):
+            self._seen = []
+            # top-level folders starting with "_" or "." are reserved (e.g. _synced)
+            for d in sorted(p for p in self.root.iterdir()
+                            if p.is_dir() and not p.name.startswith(("_", "."))):
                 self._scan_platform(idx, d)
+            self._finish(idx)
             idx.built = time.time()
             self.index = idx
+            if self.cat and self.cat.enabled:
+                self.cat.touch(self._seen)
+                removed = self.cat.prune(t0 - 1)
+                if removed:
+                    log.info("catalog: removed %d files that no longer exist", removed)
+                self._start_hashing()
             log.info("index klart: %d artister, %d album, %d låtar på %.1fs",
                      len(idx.artists), len(idx.albums), len(idx.songs), time.time() - t0)
         except Exception:
@@ -206,6 +226,61 @@ class Library:
         finally:
             self.scanning = False
             self._lock.release()
+
+    def _start_hashing(self):
+        """Hash new files in the background; rescan once if that reveals duplicates."""
+        if self._hashing:
+            return
+        self._hashing = True
+
+        def run():
+            try:
+                n = self.cat.hash_missing(self.root)
+                if n:
+                    log.info("catalog: hashed %d files", n)
+                    if self.cat.duplicate_groups():
+                        self.scan()
+            finally:
+                self._hashing = False
+        threading.Thread(target=run, daemon=True, name="catalog-hash").start()
+
+    def _finish(self, idx: Index):
+        """Game keys, and suffixes for albums whose names collide (e.g. JP vs US)."""
+        groups: dict[tuple, list[Album]] = {}
+        for al in idx.albums.values():
+            chips = self.cat.chips(al.first_file) if self.cat and al.first_file else []
+            al.chips = chips
+            al.region = region_of(al.name, Path(al.first_file).name, Path(al.first_file).parent.name)
+            al.game_key = game_key(al.platform, al.name, al.region, chips)
+            groups.setdefault((al.platform, normalize_title(al.name)), []).append(al)
+        for albums in groups.values():
+            if len({a.game_key for a in albums}) < 2:
+                continue
+            common = set.intersection(*(set(a.chips) for a in albums))
+            regions = {a.region for a in albums}
+            for a in albums:
+                parts = []
+                if len(regions) > 1 and a.region:
+                    parts.append(a.region)
+                parts += sorted(set(a.chips) - common)
+                if parts:
+                    a.name = f"{a.name} ({', '.join(parts)})"
+
+    def catalog_report(self) -> dict:
+        idx = self.index
+        keys: dict[str, list[str]] = {}
+        for al in idx.albums.values():
+            keys.setdefault(al.game_key, []).append(al.name)
+        return {
+            "catalog": self.cat.stats() if self.cat else {"enabled": False},
+            "hashing": self._hashing,
+            "identical_files": self.cat.duplicate_groups() if self.cat else [],
+            "hidden_duplicates": [{"hidden": h, "kept": k} for h, k in idx.hidden_duplicates],
+            "editions": {k: v for k, v in keys.items() if len(v) > 1},
+            "albums": [{"name": a.name, "platform": a.platform, "region": a.region,
+                        "chips": a.chips, "game_key": a.game_key}
+                       for a in sorted(idx.albums.values(), key=lambda a: a.name.lower())],
+        }
 
     def platform_name(self, folder: str) -> str:
         return str(self.cfg.get("platforms", {}).get(folder, folder))
@@ -227,6 +302,14 @@ class Library:
                     continue
                 if not tracks:
                     continue
+                rel = str(f.relative_to(self.root))
+                self._seen.append(rel)
+                sha = self.cat.sha1(rel) if self.cat else None
+                if sha:
+                    kept = idx.by_sha.setdefault(sha, rel)
+                    if kept != rel:
+                        idx.hidden_duplicates.append((rel, kept))
+                        continue
                 key = self.album_key(f, len(tracks))
                 meta = self.ensure_meta(key, f, eng, tracks)
                 if len(tracks) > 1:
@@ -295,6 +378,7 @@ class Library:
                   meta_artist=str(alb.get("artist") or ""),
                   year=int(year) if isinstance(year, int) else None,
                   cover=self._cover(meta, d, key))
+        a.first_file = str(f.relative_to(self.root))
         idx.albums[a.id] = a
         return a
 
