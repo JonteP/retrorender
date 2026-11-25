@@ -26,6 +26,7 @@ import tomllib
 from pathlib import Path
 from urllib.parse import quote
 
+from catalog import normalize_title
 from meta import gen_status
 
 log = logging.getLogger("web")
@@ -34,13 +35,14 @@ PAGE = Path(__file__).parent / "web" / "index.html"
 
 
 class WebUI:
-    def __init__(self, cfg: dict, lib, meta, cat, status_fn, probe):
+    def __init__(self, cfg: dict, lib, meta, cat, status_fn, probe, joshw=None):
         self.cfg = cfg
         self.lib = lib
         self.meta = meta
         self.cat = cat
         self.status_fn = status_fn
         self.probe = probe
+        self.joshw = joshw
         web = cfg.get("web", {})
         sub = cfg.get("subsonic", {})
         self.user = str(web.get("user", sub.get("user", "musicassistant")))
@@ -107,6 +109,8 @@ class WebUI:
         if name == "rescan" and post:
             threading.Thread(target=self.lib.scan, daemon=True).start()
             return h._json({"ok": True}) or True
+        if name == "joshw":
+            return self._joshw(h, parts[1:], q, post)
         if name == "regenerate-all":
             return h._json(*self.regenerate_all(q, execute=post)) or True
         return h._json({"error": "unknown API route"}, 404) or True
@@ -206,6 +210,57 @@ class WebUI:
         h.end_headers()
         h.wfile.write(data)
         return True
+
+    # --- joshw ---------------------------------------------------------------------------
+    def _joshw(self, h, parts: list, q: dict, post: bool) -> bool:
+        j = self.joshw
+        if j is None or not j.enabled:
+            return h._json({"enabled": False}) or True
+        if not parts or parts[0] == "status":
+            return h._json(j.status()) or True
+        if parts[0] == "search":
+            total, rows = j.search(q.get("system", ""), q.get("q", ""), q.get("state", ""),
+                                   int(q.get("offset", 0) or 0), min(int(q.get("limit", 100) or 100), 500))
+            local = self._local_titles()
+            for r in rows:
+                r["platform"] = j.platform(r["system"])
+                r["in_library"] = (r["platform"].lower(), normalize_title(r["title"])) in local
+                r["albums"] = self._albums_under(r["local_dir"]) if r["local_dir"] else []
+            return h._json({"total": total, "rows": rows}) or True
+        if parts[0] == "refresh" and post:
+            systems = [q["system"]] if q.get("system") else j.systems
+            for s in systems:
+                j.refresh(s, force=q.get("force") == "1")
+            return h._json({"ok": True}) or True
+        if parts[0].isdigit() and len(parts) > 1 and post:
+            rid, action = int(parts[0]), parts[1]
+            if not j.writable:
+                return h._json({"error": "/library/_synced is not writable"}, 403) or True
+            try:
+                if action == "fetch":
+                    return h._json(j.fetch(rid, pin=q.get("pin") == "1")) or True
+                if action == "pin":
+                    j.set_state(rid, "pinned")
+                    return h._json(j.get(rid)) or True
+                if action == "unpin":
+                    j.set_state(rid, "temporary")
+                    return h._json(j.get(rid)) or True
+                if action == "remove":
+                    j.remove(rid)
+                    return h._json(j.get(rid)) or True
+            except KeyError:
+                return h._json({"error": "not found"}, 404) or True
+        return h._json({"error": "unknown joshw route"}, 404) or True
+
+    def _local_titles(self) -> set:
+        """(console, normalized title) of albums outside _synced: 'already in the library'."""
+        return {(a.platform.lower(), normalize_title(a.name.split(" (")[0]))
+                for a in self.lib.index.albums.values()
+                if not a.first_file.startswith("_synced/")}
+
+    def _albums_under(self, local_dir: str) -> list:
+        return [{"id": a.id, "name": a.name} for a in self.lib.index.albums.values()
+                if a.first_file.startswith(local_dir.rstrip("/") + "/")]
 
     # --- changes -------------------------------------------------------------------------
     def save_toml(self, al, h):

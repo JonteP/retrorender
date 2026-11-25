@@ -105,6 +105,14 @@
   .modal .box { width: min(560px, 92vw); background: var(--panel); border: 1px solid var(--line);
     border-radius: var(--radius); padding: 20px; }
   .modal .box ul { max-height: 180px; overflow: auto; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 12px 0; }
+  .tabs a { padding: 6px 12px; border-radius: 8px; background: var(--panel2);
+    border: 1px solid var(--line); color: var(--muted); }
+  .tabs a.on { color: var(--text); border-color: var(--accent); }
+  .bar { height: 6px; background: var(--panel2); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  .bar > div { height: 100%; background: var(--accent); }
+  td.actions { white-space: nowrap; text-align: right; }
+  td.actions button { padding: 4px 10px; font-size: 13px; }
   .warnbox { border-left: 3px solid var(--bad); padding: 8px 12px; background: #231819;
     border-radius: 6px; margin: 12px 0; }
   @media (max-width: 860px) {
@@ -123,6 +131,7 @@
   <nav>
     <a href="#/" data-nav="overview">Overview</a>
     <a href="#/library" data-nav="library">Library</a>
+    <a href="#/joshw" data-nav="joshw">joshw</a>
     <a href="#/catalog" data-nav="catalog">Catalog</a>
   </nav>
   <div class="ver" id="ver"></div>
@@ -188,6 +197,7 @@ async function route() {
     if (page === "library") await viewLibrary(v, q);
     else if (page === "album") await viewAlbum(v, parts[1]);
     else if (page === "catalog") await viewCatalog(v);
+    else if (page === "joshw") await viewJoshw(v, q);
     else await viewOverview(v);
   } catch (e) { v.innerHTML = `<div class="card"><b>Error:</b> ${esc(e.message)}</div>`; }
 }
@@ -396,6 +406,104 @@ async function viewCatalog(v) {
       ${c.albums.slice(0, 500).map((a) => `<tr><td>${esc(a.name)}</td><td>${esc(a.platform)}</td><td>${esc(a.region)}</td>
         <td>${esc(a.chips.join(", "))}</td><td class="mono muted">${esc(a.game_key)}</td></tr>`).join("")}
       </tbody></table>${c.albums.length > 500 ? `<p class="muted">Showing 500 of ${c.albums.length}.</p>` : ""}</section>`;
+}
+
+// --- joshw ---------------------------------------------------------------------------------
+let joshwTimer = null, joshwPolls = 0;
+async function viewJoshw(v, q) {
+  clearTimeout(joshwTimer);
+  const st = await api("joshw/status");
+  if (!st.enabled) {
+    v.innerHTML = `<h1>joshw</h1><div class="card"><p>joshw sync is turned off. Enable it in config.toml:</p>
+      <pre class="mono">[joshw]\nenabled = true\nsystems = ["wii", "gcn", "nsf"]</pre>
+      <p class="muted">and mount <span class="mono">/library/_synced</span> writable.</p></div>`;
+    return;
+  }
+  const system = q.get("system") || st.systems[0]?.system || "";
+  const params = new URLSearchParams({ system, q: q.get("q") || "", state: q.get("state") || "",
+    offset: q.get("offset") || "0", limit: "100" });
+  const res = await api("joshw/search?" + params);
+  const link = (k, val) => { const p = new URLSearchParams(q); val ? p.set(k, val) : p.delete(k);
+    if (k !== "offset") p.delete("offset"); return "#/joshw?" + p; };
+  const sys = st.systems.find((x) => x.system === system) || {};
+  const when = (t) => t ? new Date(t * 1000).toLocaleString() : "never";
+  const cur = st.current;
+  const pct = cur && cur.total ? Math.round((100 * cur.done) / cur.total) : null;
+  const stateTabs = [["", "All"], ["pinned", "In library"], ["temporary", "Temporary"], ["remote", "Not downloaded"]];
+  v.innerHTML = `
+    <div class="row" style="justify-content:space-between">
+      <div><h1>joshw</h1><span class="muted">Game music rips from joshw.info. Listen fetches a game temporarily; Add keeps it in your library.</span></div>
+      <button id="refresh">Refresh lists</button></div>
+    ${st.writable ? "" : `<div class="warnbox">/library/_synced is not writable, so nothing can be downloaded.</div>`}
+    <div class="tabs">${st.systems.map((x) => `<a href="${link("system", x.system)}" class="${x.system === system ? "on" : ""}">
+      ${esc(x.platform)} <span class="muted">${x.listed}</span></a>`).join("")}</div>
+    <div class="grid" style="grid-template-columns:2fr 1fr;margin-bottom:16px">
+      <div class="card">
+        <div class="row">
+          <input type="search" id="jq" placeholder="Search ${esc(sys.platform || "")} by title, developer, publisher" value="${esc(q.get("q") || "")}" style="flex:1">
+        </div>
+        <div class="tabs" style="margin-bottom:0">${stateTabs.map(([k, label]) =>
+          `<a href="${link("state", k)}" class="${(q.get("state") || "") === k ? "on" : ""}">${label}</a>`).join("")}</div>
+      </div>
+      <div class="card">
+        <div class="stat"><span>Listed</span><b>${sys.listed ?? 0}</b></div>
+        <div class="stat"><span>In library / temporary</span><b>${sys.pinned ?? 0} / ${sys.temporary ?? 0}</b></div>
+        <div class="stat"><span>List refreshed</span><b>${esc(when(sys.refreshed))}</b></div>
+        ${sys.error ? `<p style="color:var(--bad)">${esc(sys.error)}</p>` : ""}
+        ${cur ? `<p style="margin:8px 0 0">Downloading <b>${esc(cur.name)}</b>${pct != null ? ` · ${pct}%` : ""}</p>
+          <div class="bar"><div style="width:${pct || 3}%"></div></div>` : st.queued ? `<p>${st.queued} queued</p>` : ""}
+        <details style="margin-top:8px"><summary>Activity</summary>
+          <pre class="mono muted" style="white-space:pre-wrap">${esc(st.log.join("\n"))}</pre></details>
+      </div>
+    </div>
+    <section class="card">
+      <p class="muted" style="margin-top:0">${res.total} archives${res.total > 100 ? ", showing " + (+params.get("offset") + 1) + "–" + Math.min(res.total, +params.get("offset") + 100) : ""}.
+        Temporary downloads above ${st.temp_limit_gb} GB are removed, least recently played first.</p>
+      <table><thead><tr><th>Game</th><th>Released</th><th>Developer / publisher</th><th style="text-align:right">Size</th><th></th></tr></thead>
+      <tbody>${res.rows.map(remoteRow).join("") || `<tr><td colspan="5" class="muted">${sys.listed ? "Nothing matches." : "The list has not been read yet. Click Refresh lists."}</td></tr>`}</tbody></table>
+      <div class="row" style="justify-content:space-between;margin-top:12px">
+        ${+params.get("offset") > 0 ? `<a class="link" href="${link("offset", String(Math.max(0, +params.get("offset") - 100)))}">← Previous</a>` : "<span></span>"}
+        ${+params.get("offset") + 100 < res.total ? `<a class="link" href="${link("offset", String(+params.get("offset") + 100))}">Next →</a>` : ""}
+      </div>
+    </section>`;
+  $("#jq").onkeydown = (e) => { if (e.key === "Enter") location.hash = link("q", e.target.value.trim()); };
+  $("#refresh").onclick = async () => { await api("joshw/refresh?force=1&system=" + encodeURIComponent(system), { method: "POST" });
+    toast("Reading the list – this takes a while"); setTimeout(route, 1500); };
+  v.querySelectorAll("button[data-act]").forEach((b) => (b.onclick = async () => {
+    const [id, act] = [b.dataset.id, b.dataset.act];
+    if (act === "remove" && !confirm("Remove the downloaded files for this game?")) return;
+    try {
+      const path = act === "listen" ? `joshw/${id}/fetch?pin=0` : act === "add" ? `joshw/${id}/fetch?pin=1` : `joshw/${id}/${act}`;
+      await api(path, { method: "POST" });
+      toast({ listen: "Queued – it will be ready in a moment", add: "Queued for your library", pin: "Kept in your library",
+        unpin: "Marked as temporary", remove: "Removed" }[act]);
+      route();
+    } catch (e) { toast(e.message, true); }
+  }));
+  const busy = cur || st.queued || res.rows.some((r) => r.state === "queued" || r.state === "downloading");
+  // after a download the index is rebuilt in the background; poll a little longer for the Open link
+  const indexing = res.rows.some((r) => (r.state === "temporary" || r.state === "pinned") && !r.albums.length);
+  joshwPolls = busy ? 0 : joshwPolls + 1;
+  if (busy || (indexing && joshwPolls < 10))
+    joshwTimer = setTimeout(() => { if (location.hash.startsWith("#/joshw")) route(); }, 3000);
+}
+function remoteRow(r) {
+  const btn = (act, label, cls = "") => `<button class="${cls}" data-id="${r.id}" data-act="${act}">${label}</button>`;
+  const open = r.albums.length ? r.albums.map((a) => `<a class="link" href="#/album/${a.id}">Open</a>`).join(" ") : "";
+  const actions = {
+    remote: btn("listen", "Listen") + " " + btn("add", "Add", "primary"),
+    queued: `<span class="muted">queued…</span>`,
+    downloading: `<span class="muted">downloading…</span>`,
+    temporary: `${open} ${btn("pin", "Keep", "primary")} ${btn("remove", "Remove")}`,
+    pinned: `${open} <span class="chip ok">in library</span> ${btn("unpin", "Unkeep")} ${btn("remove", "Remove", "danger")}`,
+    error: `<span style="color:var(--bad)" title="${esc(r.error)}">failed</span> ${btn("listen", "Retry")}`,
+  }[r.state] || "";
+  const tags = (r.tags ? r.tags.split(",") : []).map((t) => `<span class="chip">${esc(t)}</span>`).join(" ");
+  return `<tr><td><b>${esc(r.title)}</b> ${tags} ${r.in_library ? `<span class="chip warn" title="An album with this title already exists in your own library">already have it</span>` : ""}
+      ${r.alt_title ? `<div class="muted">${esc(r.alt_title)}</div>` : ""}</td>
+    <td class="muted">${esc(r.date)}</td>
+    <td class="muted">${esc([r.developer, r.publisher].filter(Boolean).join(" / "))}</td>
+    <td class="len">${esc(r.size)}</td><td class="actions">${actions}</td></tr>`;
 }
 
 api("status").then((s) => ($("#ver").textContent = "v" + s.version)).catch(() => {});
