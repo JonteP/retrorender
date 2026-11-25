@@ -200,8 +200,10 @@ class Joshw:
                 _, f2 = parse_index(self._get(d), d)
                 files += f2
         except Exception as e:
-            self._exec("INSERT OR REPLACE INTO remote_systems VALUES ('joshw', ?, ?, ?, ?)",
-                       (system, time.time(), None, str(e)))
+            # keep the time of the last *successful* read, so a failure is retried soon
+            self._exec("INSERT INTO remote_systems VALUES ('joshw', ?, NULL, NULL, ?)"
+                       " ON CONFLICT(source, system) DO UPDATE SET error=excluded.error",
+                       (system, str(e)[:300]))
             self._note(f"{system}: index failed: {e}")
             return
         now = time.time()
