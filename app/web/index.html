@@ -45,9 +45,10 @@
   .chip.ok { border-color: #2f6b55; color: var(--accent2); }
   .chip.bad { border-color: #7a3b37; color: var(--bad); }
   .chip.warn { border-color: #6d5520; color: var(--accent); }
-  button { font: inherit; color: var(--text); background: var(--panel2);
+  a.button { text-decoration: none; display: inline-block; }
+  button, a.button { font: inherit; color: var(--text); background: var(--panel2);
     border: 1px solid var(--line); border-radius: 8px; padding: 7px 14px; cursor: pointer; }
-  button:hover { border-color: var(--muted); }
+  button:hover, a.button:hover { border-color: var(--muted); }
   button.primary { background: var(--accent); color: #1b1407; border-color: var(--accent);
     font-weight: 600; }
   button.danger { color: var(--bad); border-color: #7a3b37; }
@@ -359,11 +360,14 @@ async function viewAlbum(v, id) {
       </section>
       <section class="card"><h2>Title map</h2>
         <p class="muted">${a.titles_builtin ? `Built-in map in use: <span class="mono">${esc(a.titles_builtin)}</span>. ` : ""}
-          Titles you enter here (per internal file name) win over ${a.titles_builtin ? "the built-in map, " : ""}tags and file names.
+          Titles you enter here (per internal file name) win over the rip's own !tags.m3u, ${a.titles_builtin ? "the built-in map, " : ""}tags and file names.
           Empty values are ignored.</p>
         <textarea id="titles" style="min-height:180px" spellcheck="false" wrap="off" ${a.writable ? "" : "readonly"}>${esc(a.titles || a.titles_template)}</textarea>
         <div class="row" style="margin-top:12px">
-          <button class="primary" id="saveTitles" ${a.writable ? "" : "disabled"}>Save titles</button></div>
+          <button class="primary" id="saveTitles" ${a.writable ? "" : "disabled"}>Save titles</button>
+          <span style="flex:1"></span>
+          <a class="button" href="/api/album/${a.id}/tags.m3u" download="!tags.m3u"
+             title="The album's current titles in vgmstream's !tags.m3u format, e.g. to share with the rip's author">Export !tags.m3u</a></div>
       </section>
     </div>`;
   v.querySelectorAll("button.play").forEach((b) => (b.onclick = () => play(a.tracks[+b.dataset.i], a.name)));
