@@ -48,10 +48,10 @@
   .chip.ok { border-color: #2f6b55; color: var(--accent2); }
   .chip.bad { border-color: #7a3b37; color: var(--bad); }
   .chip.warn { border-color: #6d5520; color: var(--accent); }
-  a.button { text-decoration: none; display: inline-block; }
-  button, a.button { font: inherit; color: var(--text); background: var(--panel2);
+  a.button, label.button { text-decoration: none; display: inline-block; }
+  button, a.button, label.button { font: inherit; color: var(--text); background: var(--panel2);
     border: 1px solid var(--line); border-radius: 8px; padding: 7px 14px; cursor: pointer; }
-  button:hover, a.button:hover { border-color: var(--muted); }
+  button:hover, a.button:hover, label.button:hover { border-color: var(--muted); }
   button.primary { background: var(--accent); color: #1b1407; border-color: var(--accent);
     font-weight: 600; }
   button.danger { color: var(--bad); border-color: #7a3b37; }
@@ -99,7 +99,7 @@
     text-overflow: ellipsis; }
   .player audio { flex: 1; height: 36px; }
   .player .ctl { display: flex; gap: 6px; align-items: center; }
-  .player .ctl button { padding: 6px 10px; min-width: 38px; }
+  .player .ctl button { padding: 4px 8px; min-width: 38px; font-size: 16px; line-height: 1.3; }
   .player .remote { flex: 1; display: flex; gap: 12px; align-items: center; color: var(--muted); }
   .player select { padding: 7px 10px; color: var(--text); background: var(--panel2);
     border: 1px solid var(--line); border-radius: 8px; font: inherit; max-width: 230px; }
@@ -126,6 +126,56 @@
   td.actions button { padding: 4px 10px; font-size: 13px; }
   .warnbox { border-left: 3px solid var(--bad); padding: 8px 12px; background: #231819;
     border-radius: 6px; margin: 12px 0; }
+  /* queue, menus, playlists */
+  .player .nowcover { width: 44px; height: 44px; flex: none; border-radius: 6px; background: var(--panel2) center/cover;
+    border: 1px solid var(--line); cursor: pointer; }
+  .player .now { cursor: pointer; }
+  .player .ctl button.on { color: var(--accent); border-color: var(--accent); }
+  .player .ctl .badge { font-size: 11px; color: var(--muted); margin-left: 2px; }
+  .qpanel { position: fixed; right: 0; top: 57px; bottom: 65px; width: min(400px, 100vw); z-index: 7;
+    background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column;
+    box-shadow: -8px 0 24px rgba(0,0,0,.35); }
+  .qpanel[hidden] { display: none; }
+  .qpanel .qhead { padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .qpanel .qlist { flex: 1; overflow: auto; padding: 6px 0; }
+  .qitem { display: grid; grid-template-columns: 18px 34px 1fr auto auto; gap: 10px; align-items: center;
+    padding: 5px 12px; cursor: pointer; }
+  .qitem:hover { background: var(--panel2); }
+  .qitem.cur { background: #2a2418; }
+  .qitem.cur .qt { color: var(--accent); }
+  .qitem.past { opacity: .55; }
+  .qitem.drop { box-shadow: inset 0 2px 0 var(--accent); }
+  .qitem .grip { color: var(--muted); cursor: grab; text-align: center; }
+  .qitem .thumb { width: 34px; height: 34px; border-radius: 4px; background: var(--panel2) center/cover;
+    border: 1px solid var(--line); display: grid; place-items: center; font: 10px var(--mono); color: var(--muted); }
+  .qitem .qt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .qitem .qs { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .qitem .x { padding: 2px 8px; border: 0; background: none; color: var(--muted); }
+  .qitem .x:hover { color: var(--bad); }
+  .menu { position: fixed; z-index: 11; min-width: 200px; padding: 6px; background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.45); }
+  .menu button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 7px 10px; }
+  .menu button:hover { background: var(--panel); }
+  .menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+  .more { width: 30px; height: 30px; padding: 0; border-radius: 50%; border-color: transparent; background: none; color: var(--muted); }
+  .more:hover { color: var(--text); }
+  .cover { position: relative; }
+  .cplay { position: absolute; right: 8px; bottom: 8px; width: 40px; height: 40px; border-radius: 50%; padding: 0;
+    background: var(--accent); color: #1b1407; border: 0; font-size: 15px; opacity: 0; transform: translateY(4px);
+    transition: .15s; box-shadow: 0 4px 12px rgba(0,0,0,.5); }
+  .album:hover .cplay, .cplay:focus { opacity: 1; transform: none; }
+  @media (hover: none) { .cplay { opacity: .9; transform: none; } }
+  .mosaic { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+  .mosaic div { background: center/cover; }
+  .mosaic.one { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+  .side input[type=search] { margin-top: 6px; }
+  .side .sub { padding-left: 20px; }
+  .side details > summary { display: none; }
+  @media (max-width: 860px) { .side details > summary { display: block; margin-top: 10px; } }
+  select.sort { padding: 7px 10px; color: var(--text); background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 8px; font: inherit; }
+  tr[draggable] td:first-child { cursor: grab; }
+  tr.drop td { box-shadow: inset 0 2px 0 var(--accent); }
   @media (max-width: 860px) {
     .lib, .ahead, .two { grid-template-columns: 1fr; }
     .side { position: static; max-height: none; }
@@ -133,6 +183,10 @@
     header .ver { display: none; }
     nav a { padding: 6px 8px; }
     main { padding: 16px; padding-bottom: 120px; }
+    .player { gap: 8px; padding: 8px 10px; flex-wrap: wrap; }
+    .player .nowcover { display: none !important; }
+    .player .now { flex: 1 1 100%; }
+    .qpanel { top: 0; bottom: 105px; }
   }
 </style>
 </head>
@@ -142,6 +196,7 @@
   <nav>
     <a href="#/" data-nav="overview">Overview</a>
     <a href="#/library" data-nav="library">Library</a>
+    <a href="#/playlists" data-nav="playlists">Playlists</a>
     <a href="#/joshw" data-nav="joshw">joshw</a>
     <a href="#/catalog" data-nav="catalog">Catalog</a>
   </nav>
@@ -151,11 +206,15 @@
 <main id="view"><p class="muted">Loading…</p></main>
 
 <div class="player">
-  <div class="now"><span class="muted">Not playing</span></div>
+  <div class="nowcover" id="nowcover" hidden></div>
+  <div class="now" id="now" title="Go to the album"><span class="muted">Not playing</span></div>
   <div class="ctl">
+    <button id="pShuffle" title="Shuffle the rest of the queue">🔀</button>
     <button id="pPrev" title="Previous">⏮</button>
-    <button id="pToggle" title="Pause / play">⏯</button>
+    <button id="pToggle" title="Pause / play (space)">⏯</button>
     <button id="pNext" title="Next">⏭</button>
+    <button id="pRepeat" title="Repeat: off">🔁</button>
+    <button id="pQueue" title="Queue">☰<span class="badge" id="qcount"></span></button>
   </div>
   <audio id="audio" controls preload="none"></audio>
   <div class="remote" id="remote" hidden>
@@ -167,6 +226,7 @@
     <option value="browser">This browser</option>
   </select>
 </div>
+<aside class="qpanel" id="qpanel" hidden></aside>
 <div class="toast" id="toast"></div>
 <div class="modal" id="modal"><div class="box" id="modalbox"></div></div>
 
@@ -195,64 +255,316 @@ function modal(html) { $("#modalbox").innerHTML = html; $("#modal").classList.ad
 function closeModal() { $("#modal").classList.remove("show"); }
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
 
-// --- player: this browser or a Cast/DLNA device on the network ---------------------------
-let playingId = null, queue = [], qi = 0, qAlbum = "", devices = [], remotePoll = null;
-let target = "browser";
-try { target = localStorage.getItem("retro.target") || "browser"; } catch (e) { /* no storage */ }
+// --- player: a queue, played in this browser or on a Cast/DLNA device ---------------------
+// A track is the object the API returns (song_brief): id, title, artist, album, album_id,
+// platform, cover, duration, render. The queue is kept in localStorage, so it survives a reload.
+let queue = [], qi = 0, repeat = "off", shuffled = false, playingId = null;
+let devices = [], remotePoll = null, target = "browser";
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("retro." + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem("retro." + k, JSON.stringify(v)); } catch (e) { /* no storage */ } },
+};
+target = store.get("target", "browser");
 const post = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" },
   body: JSON.stringify(body || {}) });
+const coverUrl = (albumId) => `/api/cover/${albumId}`;
+const isRemote = () => target !== "browser";
 
-function setNow(t, album, extra = "") {
+function saveQueue() { store.set("queue", { queue, qi, repeat, shuffled }); }
+function restoreQueue() {
+  const q = store.get("queue", null);
+  if (!q || !Array.isArray(q.queue)) return;
+  queue = q.queue; qi = Math.min(q.qi || 0, Math.max(0, queue.length - 1));
+  repeat = q.repeat || "off"; shuffled = !!q.shuffled;
+  if (queue[qi] && !isRemote()) { $("#audio").src = queue[qi].render; }
+  setNow(queue[qi]);
+}
+function shuffleArr(a) {
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+
+function setNow(t, extra = "") {
   playingId = t ? t.id : null;
-  $(".player .now").innerHTML = t
-    ? `<b>${esc(t.title)}</b> <span class="muted">· ${esc(album || "")}${extra}</span>`
+  $("#now").innerHTML = t
+    ? `<b>${esc(t.title)}</b> <span class="muted">· ${esc([t.album, t.platform].filter(Boolean).join(" · "))}${extra}</span>`
     : `<span class="muted">Not playing</span>`;
-  document.querySelectorAll("tr[data-id]").forEach((r) =>
-    r.classList.toggle("playing", r.dataset.id === playingId));
+  const c = $("#nowcover");
+  c.hidden = !(t && t.cover);
+  if (t && t.cover) c.style.backgroundImage = `url('${coverUrl(t.album_id)}')`;
+  document.querySelectorAll("[data-id]").forEach((r) => r.classList.toggle("playing", r.dataset.id === playingId));
+  if ("mediaSession" in navigator && t) {
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({ title: t.title, artist: t.artist, album: t.album,
+        artwork: t.cover ? [{ src: coverUrl(t.album_id) }] : [] });
+    } catch (e) { /* older browsers */ }
+  }
+  showControls();
 }
-function play(t, album, list) {
-  queue = list && list.length ? list : [t];
-  qi = Math.max(0, queue.indexOf(t));
-  qAlbum = album;
-  if (target === "browser") return playLocal();
-  playRemote();
+function showControls() {
+  $("#pShuffle").classList.toggle("on", shuffled);
+  $("#pRepeat").classList.toggle("on", repeat !== "off");
+  $("#pRepeat").textContent = repeat === "one" ? "🔂" : "🔁";
+  $("#pRepeat").title = "Repeat: " + { off: "off", all: "the whole queue", one: "this track" }[repeat];
+  $("#qcount").textContent = queue.length ? queue.length : "";
+  if (!$("#qpanel").hidden) renderQueue();
 }
-function playLocal() {
+
+// queue operations; every change is saved and, when a device plays, sent to it
+function changed(restart = false) {
+  saveQueue(); showControls();
+  if (isRemote()) return restart ? startRemote() : sendQueue();
+  if (restart) startLocal();
+}
+function playList(list, start = 0) {
+  if (!list || !list.length) return toast("Nothing to play", true);
+  queue = list.slice(); qi = Math.max(0, Math.min(start, queue.length - 1));
+  if (shuffled) { const first = queue.splice(qi, 1)[0]; queue = [first, ...shuffleArr(queue)]; qi = 0; }
+  changed(true);
+}
+function play(t, list) { const l = list && list.length ? list : [t]; playList(l, Math.max(0, l.indexOf(t))); }
+function playNext(tracks) {
+  if (!queue.length) return playList(tracks);
+  queue.splice(qi + 1, 0, ...tracks); changed();
+  toast(tracks.length === 1 ? `“${tracks[0].title}” plays next` : `${tracks.length} tracks play next`);
+}
+function enqueue(tracks) {
+  if (!queue.length) return playList(tracks);
+  queue.push(...tracks); changed();
+  toast(tracks.length === 1 ? `Added “${tracks[0].title}” to the queue` : `Added ${tracks.length} tracks to the queue`);
+}
+function jump(i) {
+  if (i < 0 || i >= queue.length) return;
+  qi = i; saveQueue();
+  if (isRemote()) return remote("goto", i);
+  startLocal();
+}
+function removeAt(i) {
+  const cur = i === qi;
+  queue.splice(i, 1);
+  if (i < qi) qi--;
+  qi = Math.min(qi, Math.max(0, queue.length - 1));
+  if (!queue.length) { stopAll(); return; }
+  changed(cur);
+}
+function moveItem(from, to) {
+  if (from === to) return;
+  const [t] = queue.splice(from, 1);
+  queue.splice(to > from ? to - 1 : to, 0, t);
+  if (qi === from) qi = to > from ? to - 1 : to;
+  else if (from < qi && to > qi) qi--;
+  else if (from > qi && to <= qi) qi++;
+  changed();
+}
+function clearQueue() {
+  const cur = queue[qi];
+  queue = cur ? [cur] : []; qi = 0; changed();
+}
+function stopAll() {
+  queue = []; qi = 0; saveQueue();
+  if (isRemote()) remote("stop"); else { $("#audio").pause(); $("#audio").removeAttribute("src"); }
+  setNow(null);
+}
+function step(dir) {
+  let n = qi + dir;
+  if (repeat === "all" && queue.length) n = (n + queue.length) % queue.length;
+  if (n < 0 || n >= queue.length) return false;
+  jump(n); return true;
+}
+function toggleShuffle() {
+  shuffled = !shuffled;
+  // only the tracks after the current one are shuffled; turning it off keeps the order
+  if (shuffled && queue.length > qi + 2) queue = [...queue.slice(0, qi + 1), ...shuffleArr(queue.slice(qi + 1))];
+  changed();
+  toast(shuffled ? "Shuffle on" : "Shuffle off");
+}
+function cycleRepeat() {
+  repeat = { off: "all", all: "one", one: "off" }[repeat];
+  saveQueue(); showControls();
+  if (isRemote()) remote("repeat", repeat);
+}
+
+// this browser
+function startLocal() {
   const a = $("#audio"), t = queue[qi];
   if (!t) return;
   a.src = t.render; a.play().catch(() => {});
-  setNow(t, qAlbum);
+  setNow(t);
 }
 $("#audio").addEventListener("ended", () => {
-  if (target === "browser" && qi + 1 < queue.length) { qi++; playLocal(); }
+  if (isRemote()) return;
+  if (repeat === "one") { const a = $("#audio"); a.currentTime = 0; return a.play().catch(() => {}); }
+  step(1);
 });
-async function playRemote() {
+
+// a device: the server keeps its queue; we send changes and follow its state
+async function startRemote() {
   try {
-    await post(`outputs/${encodeURIComponent(target)}/play`, { songs: queue.map((t) => t.id), start: qi });
-    setNow(queue[qi], qAlbum, " · starting…");
+    await post(`outputs/${encodeURIComponent(target)}/play`, { songs: queue.map((t) => t.id), start: qi, repeat });
+    setNow(queue[qi], " · starting…");
     pollRemote();
   } catch (e) { toast(e.message, true); }
+}
+let sendTimer = null;
+function sendQueue() {            // several quick edits (dragging) become one request
+  clearTimeout(sendTimer);
+  sendTimer = setTimeout(async () => {
+    if (!queue.length) return;
+    try { await post(`outputs/${encodeURIComponent(target)}/queue`, { songs: queue.map((t) => t.id), index: qi }); }
+    catch (e) { toast(e.message, true); }
+  }, 300);
 }
 async function remote(action, value) {
   try { await post(`outputs/${encodeURIComponent(target)}/${action}`, { value }); pollRemote(); }
   catch (e) { toast(e.message, true); }
 }
+
 $("#pPrev").onclick = () => {
-  if (target !== "browser") return remote("prev");
-  if (qi > 0) { qi--; playLocal(); }
+  const a = $("#audio");
+  if (!isRemote() && a.currentTime > 3) { a.currentTime = 0; return; }
+  step(-1);
 };
-$("#pNext").onclick = () => {
-  if (target !== "browser") return remote("next");
-  if (qi + 1 < queue.length) { qi++; playLocal(); }
-};
+$("#pNext").onclick = () => step(1);
 $("#pToggle").onclick = () => {
-  if (target === "browser") { const a = $("#audio"); return a.paused ? a.play() : a.pause(); }
-  const d = devices.find((x) => x.id === target);
-  remote(d && d.session && d.session.state === "PAUSED" ? "resume" : "pause");
+  if (!isRemote()) {
+    const a = $("#audio");
+    if (!a.src && queue[qi]) return startLocal();
+    return a.paused ? a.play() : a.pause();
+  }
+  const d = devices.find((x) => x.id === target), s = d && d.session;
+  if (!s || s.stopped) return queue.length ? startRemote() : null;
+  remote(s.state === "PAUSED" ? "resume" : "pause");
 };
+$("#pShuffle").onclick = toggleShuffle;
+$("#pRepeat").onclick = cycleRepeat;
 $("#pStop").onclick = () => remote("stop");
 $("#rVol").onchange = (e) => remote("volume", e.target.value / 100);
+$("#pQueue").onclick = () => { const p = $("#qpanel"); p.hidden = !p.hidden; if (!p.hidden) renderQueue(); };
+$("#now").onclick = $("#nowcover").onclick = () => { const t = queue[qi]; if (t) location.hash = "#/album/" + t.album_id; };
+document.addEventListener("keydown", (e) => {
+  if (e.key !== " " || e.ctrlKey || e.metaKey || /INPUT|TEXTAREA|SELECT|BUTTON/.test(e.target.tagName)) return;
+  e.preventDefault(); $("#pToggle").click();
+});
+if ("mediaSession" in navigator) {
+  try {
+    navigator.mediaSession.setActionHandler("nexttrack", () => step(1));
+    navigator.mediaSession.setActionHandler("previoustrack", () => step(-1));
+  } catch (e) { /* not supported */ }
+}
 
+function renderQueue() {
+  const p = $("#qpanel");
+  const total = queue.reduce((n, t) => n + (t.duration || 0), 0);
+  const left = queue.slice(qi).reduce((n, t) => n + (t.duration || 0), 0);
+  p.innerHTML = `<div class="qhead">
+      <div class="row" style="justify-content:space-between"><h1 style="font-size:18px;margin:0">Queue</h1>
+        <button id="qClose" title="Close">✕</button></div>
+      <div class="muted">${queue.length} tracks · ${fmt(total)}${queue.length ? ` · ${fmt(left)} left` : ""}</div>
+      <div class="row" style="margin-top:10px">
+        <button id="qSave" ${queue.length ? "" : "disabled"}>Save as playlist…</button>
+        <button id="qClear" ${queue.length > 1 ? "" : "disabled"} title="Remove everything except the current track">Clear</button></div>
+    </div>
+    <div class="qlist">${queue.map((t, i) => `<div class="qitem ${i === qi ? "cur" : i < qi ? "past" : ""}" draggable="true" data-i="${i}">
+        <span class="grip" title="Drag to move">⋮⋮</span>
+        <div class="thumb" ${t.cover ? `style="background-image:url('${coverUrl(t.album_id)}')"` : ""}>${t.cover ? "" : esc(initials(t.album))}</div>
+        <div style="min-width:0"><div class="qt">${esc(t.title)}</div><div class="qs">${esc(t.album)} · ${esc(t.artist)}</div></div>
+        <span class="muted mono">${fmt(t.duration)}</span>
+        <button class="x" data-rm="${i}" title="Remove from the queue">✕</button></div>`).join("")
+      || `<p class="muted" style="padding:0 16px">Empty. Use ▶ or “Add to queue” anywhere in the library.</p>`}</div>`;
+  $("#qClose").onclick = () => (p.hidden = true);
+  $("#qClear").onclick = clearQueue;
+  $("#qSave").onclick = () => pickPlaylist(queue.slice(), true);
+  p.querySelectorAll(".qitem").forEach((el) => {
+    const i = +el.dataset.i;
+    el.onclick = (e) => { if (e.target.dataset.rm != null) return removeAt(+e.target.dataset.rm); jump(i); };
+  });
+  dragSort(p.querySelector(".qlist"), ".qitem", moveItem);
+  const cur = p.querySelector(".qitem.cur");
+  if (cur) cur.scrollIntoView({ block: "nearest" });
+}
+
+// drag to reorder: calls move(from, to) where `to` is the index the item is dropped before
+function dragSort(container, sel, move) {
+  if (!container) return;
+  let from = null;
+  container.querySelectorAll(sel).forEach((el) => {
+    el.addEventListener("dragstart", (e) => { from = +el.dataset.i; e.dataTransfer.effectAllowed = "move"; });
+    el.addEventListener("dragover", (e) => { e.preventDefault(); el.classList.add("drop"); });
+    el.addEventListener("dragleave", () => el.classList.remove("drop"));
+    el.addEventListener("drop", (e) => {
+      e.preventDefault(); el.classList.remove("drop");
+      if (from != null) move(from, +el.dataset.i);
+      from = null;
+    });
+  });
+  container.addEventListener("dragover", (e) => e.preventDefault());
+  container.addEventListener("drop", (e) => {       // dropped below the last item
+    if (from != null && e.target === container) move(from, container.querySelectorAll(sel).length);
+    from = null;
+  });
+}
+
+// --- menus and "add to playlist" -----------------------------------------------------------
+function menu(ev, items) {
+  ev.preventDefault(); ev.stopPropagation();
+  closeMenu();
+  const m = document.createElement("div");
+  m.className = "menu"; m.id = "menu";
+  m.innerHTML = items.map((it, i) => it === "-" ? "<hr>" : `<button data-i="${i}">${esc(it[0])}</button>`).join("");
+  document.body.appendChild(m);
+  const r = ev.currentTarget.getBoundingClientRect();
+  const x = Math.min(r.left, innerWidth - m.offsetWidth - 8), y = r.bottom + m.offsetHeight > innerHeight - 70
+    ? r.top - m.offsetHeight - 4 : r.bottom + 4;
+  m.style.left = Math.max(8, x) + "px"; m.style.top = Math.max(8, y) + "px";
+  m.onclick = (e) => { const b = e.target.closest("button"); if (b) { closeMenu(); items[+b.dataset.i][1](); } };
+}
+function closeMenu() { const m = $("#menu"); if (m) m.remove(); }
+document.addEventListener("click", (e) => { if (!e.target.closest("#menu")) closeMenu(); });
+window.addEventListener("scroll", closeMenu, true);
+
+// menu items for a list of tracks; `get` may be async (fetching an album's tracks first)
+function trackItems(get, one) {
+  const run = (fn) => async () => { try { const t = await get(); fn(t); } catch (e) { toast(e.message, true); } };
+  const items = [["▶ Play now", run((t) => playList(t))], ["Play next", run(playNext)], ["Add to queue", run(enqueue)],
+    ["Add to playlist…", run((t) => pickPlaylist(t))]];
+  if (one) {
+    items.push("-", ["Go to album", () => (location.hash = "#/album/" + one.album_id)]);
+    (one.artists || []).slice(0, 3).forEach((a) => items.push([`Go to ${a.name}`, () => (location.hash = "#/library?artist=" + a.id)]));
+  }
+  return items;
+}
+
+async function pickPlaylist(tracks, fromQueue = false) {
+  let r;
+  try { r = await api("playlists"); } catch (e) { return toast(e.message, true); }
+  modal(`<h1>${fromQueue ? "Save the queue as a playlist" : `Add ${tracks.length === 1 ? "“" + esc(tracks[0].title) + "”" : tracks.length + " tracks"} to a playlist`}</h1>
+    ${r.writable ? "" : `<div class="warnbox">The meta folder is read-only, so playlists cannot be saved.</div>`}
+    <div class="row" style="margin:12px 0"><input type="text" id="plName" placeholder="New playlist name" style="flex:1">
+      <button class="primary" id="plNew" ${r.writable ? "" : "disabled"}>Create</button></div>
+    ${r.playlists.length ? `<h2 style="margin-top:16px">${fromQueue ? "Or replace" : "Or add to"}</h2><ul style="list-style:none;padding:0;max-height:260px">
+      ${r.playlists.map((p) => `<li><a class="link" href="#" data-pl="${p.id}">${esc(p.name)}</a> <span class="muted">· ${p.songs} tracks</span></li>`).join("")}</ul>` : ""}
+    <div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="closeModal()">Cancel</button></div>`);
+  const ids = tracks.map((t) => t.id);
+  $("#plName").focus();
+  const create = async () => {
+    try {
+      const p = await post("playlists", { name: $("#plName").value || "New playlist", songs: ids });
+      closeModal(); toast(`Saved “${p.name}” with ${p.songs} tracks`);
+    } catch (e) { toast(e.message, true); }
+  };
+  $("#plNew").onclick = create;
+  $("#plName").onkeydown = (e) => { if (e.key === "Enter") create(); };
+  $("#modalbox").querySelectorAll("[data-pl]").forEach((a) => (a.onclick = async (e) => {
+    e.preventDefault();
+    if (fromQueue && !confirm(`Replace the tracks in “${a.textContent}” with the queue?`)) return;
+    try {
+      const p = await post("playlist/" + a.dataset.pl, fromQueue ? { songs: ids } : { add: ids });
+      closeModal(); toast(fromQueue ? `Saved the queue to “${p.name}”` : `Added to “${p.name}” (${p.songs} tracks)`);
+    } catch (err) { toast(err.message, true); }
+  }));
+}
+
+// --- devices ---------------------------------------------------------------------------------
 async function loadDevices(rediscover = false) {
   try {
     const r = rediscover ? await post("outputs/discover") : await api("outputs");
@@ -262,16 +574,15 @@ async function loadDevices(rediscover = false) {
   sel.innerHTML = `<option value="browser">This browser</option>` +
     devices.map((d) => `<option value="${esc(d.id)}">${esc(d.name)} (${d.kind === "cast" ? "Cast" : "DLNA"})</option>`).join("") +
     `<option value="__rescan">Search for devices…</option>`;
-  if (target !== "browser" && !devices.some((d) => d.id === target)) target = "browser";
+  if (isRemote() && !devices.some((d) => d.id === target)) target = "browser";
   sel.value = target;
   showTarget();
 }
 function showTarget() {
-  const remoteOn = target !== "browser";
-  $("#audio").hidden = remoteOn;
-  $("#remote").hidden = !remoteOn;
+  $("#audio").hidden = isRemote();
+  $("#remote").hidden = !isRemote();
   clearInterval(remotePoll);
-  if (remoteOn) { pollRemote(); remotePoll = setInterval(pollRemote, 2500); }
+  if (isRemote()) { pollRemote(); remotePoll = setInterval(pollRemote, 2500); }
 }
 $("#target").onchange = async (e) => {
   if (e.target.value === "__rescan") {
@@ -279,19 +590,27 @@ $("#target").onchange = async (e) => {
     await loadDevices(true);
     return toast(`${devices.length} device(s) found`);
   }
+  const was = isRemote();
   target = e.target.value;
-  try { localStorage.setItem("retro.target", target); } catch (err) { /* no storage */ }
-  if (target !== "browser") $("#audio").pause();
+  store.set("target", target);
+  const a = $("#audio");
+  if (isRemote() && !was && !a.paused && queue.length) { a.pause(); startRemote(); }   // move the music over
+  else if (isRemote()) a.pause();
   showTarget();
 };
 async function pollRemote() {
-  if (target === "browser" || document.hidden) return;
+  if (!isRemote() || document.hidden) return;
   try { devices = (await api("outputs")).devices || devices; } catch (e) { return; }
   const d = devices.find((x) => x.id === target), s = d && d.session;
   if (!s || !s.song) { $("#rState").textContent = d ? "Idle" : "Device gone"; return; }
   const st = { PLAYING: "Playing", PAUSED: "Paused", BUFFERING: "Loading", STOPPED: "Stopped", IDLE: "Waiting" }[s.state] || s.state || "";
   $("#rState").textContent = `${st} · ${s.index + 1}/${s.count}` + (s.error ? ` · ${s.error}` : "");
-  setNow({ id: s.song.id, title: s.song.title }, s.song.artist);
+  // follow the device through our queue when it is the same queue
+  if (s.songs && s.songs.length === queue.length && s.songs.every((id, i) => queue[i].id === id) && s.index !== qi) {
+    qi = s.index; saveQueue();
+  }
+  const t = queue.find((x) => x.id === s.song.id) || { id: s.song.id, title: s.song.title, album: s.song.artist, album_id: s.song.album_id };
+  if (playingId !== t.id || !$("#qpanel").hidden) setNow(t);
 }
 
 // --- router ---------------------------------------------------------------------------------
@@ -304,11 +623,13 @@ async function route() {
   const { parts, q } = parseHash();
   const page = parts[0] || "overview";
   document.querySelectorAll("nav a").forEach((a) =>
-    a.classList.toggle("on", a.dataset.nav === (page === "album" ? "library" : page)));
+    a.classList.toggle("on", a.dataset.nav === ({ album: "library", playlist: "playlists" }[page] || page)));
   const v = $("#view");
   try {
     if (page === "library") await viewLibrary(v, q);
     else if (page === "album") await viewAlbum(v, parts[1]);
+    else if (page === "playlists") await viewPlaylists(v);
+    else if (page === "playlist") await viewPlaylist(v, parts[1]);
     else if (page === "catalog") await viewCatalog(v);
     else if (page === "joshw") await viewJoshw(v, q);
     else await viewOverview(v);
@@ -377,36 +698,57 @@ async function confirmRegenerateAll(path) {
 }
 
 // --- library --------------------------------------------------------------------------------
+const FILTERS = ["platform", "artist", "year", "chip", "q", "sort"];
+let facetCache = null;
 async function viewLibrary(v, q) {
-  const [platforms, artists] = await Promise.all([api("platforms"), api("artists")]);
   const params = new URLSearchParams();
-  for (const k of ["platform", "artist", "q"]) if (q.get(k)) params.set(k, q.get(k));
-  const res = await api("albums?" + params);
+  for (const k of FILTERS) if (q.get(k)) params.set(k, q.get(k));
+  const [facets, res] = await Promise.all([api("facets"), api("albums?" + params)]);
+  facetCache = facets;
   const link = (k, val) => { const p = new URLSearchParams(params);
     if (val == null || p.get(k) === val) p.delete(k); else p.set(k, val);
     return "#/library?" + p; };
-  const artistName = q.get("artist") ? (artists.find((a) => a.id === q.get("artist")) || {}).name : null;
-  const title = [q.get("platform"), artistName, q.get("q") && `“${q.get("q")}”`].filter(Boolean).join(" · ") || "All albums";
+  const artistName = q.get("artist") ? (facets.artists.find((a) => a.id === q.get("artist")) || {}).name : null;
+  const title = [q.get("platform"), artistName, q.get("year"), q.get("chip"), q.get("q") && `“${q.get("q")}”`]
+    .filter(Boolean).join(" · ") || "All albums";
+  // years grouped by decade; the years of the chosen decade are listed under it
+  const decades = {};
+  for (const y of facets.years) { const d = Math.floor(y.year / 10) * 10 + "s"; decades[d] = (decades[d] || 0) + y.albums; }
+  const yq = q.get("year") || "", openDecade = yq.endsWith("s") ? yq : yq ? Math.floor(+yq / 10) * 10 + "s" : "";
+  const side = (label, items) => items.length ? `<h2>${label}</h2>${items.join("")}` : "";
+  const a = (href, on, name, n, cls = "") => `<a href="${href}" class="${on ? "on" : ""} ${cls}"><span>${esc(name)}</span><span>${n}</span></a>`;
+  const filtered = params.toString() && !(params.size === 1 && params.get("sort"));
   v.innerHTML = `
   <div class="lib">
     <aside class="side">
       <input type="search" id="search" placeholder="Search titles, composers, consoles" value="${esc(q.get("q") || "")}">
-      <h2>Consoles</h2>
-      ${platforms.map((p) => `<a href="${link("platform", p.name)}" class="${q.get("platform") === p.name ? "on" : ""}">
-         <span>${esc(p.name)}</span><span>${p.albums}</span></a>`).join("")}
+      <details id="facets" ${matchMedia("(max-width: 860px)").matches ? "" : "open"}><summary>Browse by console, year, chip, composer</summary>
+      ${side("Consoles", facets.platforms.map((p) => a(link("platform", p.name), q.get("platform") === p.name, p.name, p.albums)))}
+      ${side("Years", Object.entries(decades).flatMap(([d, n]) => [a(link("year", d), yq === d, d, n),
+        ...(d === openDecade ? facets.years.filter((y) => Math.floor(y.year / 10) * 10 + "s" === d)
+          .map((y) => a(link("year", String(y.year)), yq === String(y.year), y.year, y.albums, "sub")) : [])]))}
+      ${side("Sound chips", facets.chips.map((c) => a(link("chip", c.name), q.get("chip") === c.name, c.name, c.albums)))}
       <h2>Composers</h2>
-      ${artists.slice(0, 150).map((a) => `<a href="${link("artist", a.id)}" class="${q.get("artist") === a.id ? "on" : ""}">
-         <span>${esc(a.name)}</span><span>${a.albums}</span></a>`).join("")}
-      ${artists.length > 150 ? `<p class="muted" style="padding:4px 8px">…and ${artists.length - 150} more. Use the search.</p>` : ""}
+      <input type="search" id="afilter" placeholder="Filter ${facets.artists.length} composers">
+      <div id="alist"></div>
+      </details>
     </aside>
     <section>
       <div class="row" style="justify-content:space-between;margin-bottom:16px">
-        <div><h1>${esc(title)}</h1><span class="muted">${res.albums.length} albums</span></div>
-        ${params.toString() ? `<a class="link" href="#/library">Clear filters</a>` : ""}
+        <div><h1>${esc(title)}</h1><span class="muted">${res.albums.length} albums${res.songs.length ? ` · ${res.songs.length}${res.songs.length >= 200 ? "+" : ""} matching tracks` : ""}</span></div>
+        <div class="row">
+          <button class="primary" id="playAll" ${res.albums.length ? "" : "disabled"}>▶ Play all</button>
+          <button id="shuffleAll" ${res.albums.length ? "" : "disabled"}>🔀 Shuffle</button>
+          <button class="more" id="moreAll" title="More" ${res.albums.length ? "" : "disabled"}>⋯</button>
+          <select class="sort" id="sort" title="Sort albums">
+            ${[["", "Console, title"], ["name", "Title"], ["year", "Year"], ["added", "Recently added"]]
+              .map(([k, l]) => `<option value="${k}" ${(q.get("sort") || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select>
+          ${filtered ? `<a class="link" href="#/library">Clear filters</a>` : ""}
+        </div>
       </div>
       ${res.songs.length ? `<div class="card" style="margin-bottom:20px"><h2>Matching tracks</h2>
-        ${res.songs.slice(0, 30).map((s) => `<div><a class="link" href="#/album/${s.album_id}">${esc(s.title)}</a>
-          <span class="muted">· ${esc(s.artist)} · ${esc(s.album)}</span></div>`).join("")}</div>` : ""}
+        ${trackTable(res.songs.slice(0, 30), { album: true })}
+        ${res.songs.length > 30 ? `<p class="muted">Showing 30 of ${res.songs.length}${res.songs.length >= 200 ? "+" : ""}. Play all plays every match.</p>` : ""}</div>` : ""}
       <div class="albums">${res.albums.map(albumCard).join("") || `<p class="muted">Nothing found.</p>`}</div>
     </section>
   </div>`;
@@ -417,14 +759,60 @@ async function viewLibrary(v, q) {
     if (val) p.set("q", val); else p.delete("q");
     location.hash = "#/library" + (p.toString() ? "?" + p : "");
   };
+  $("#sort").onchange = (e) => (location.hash = link("sort", e.target.value || null));
+  const listArtists = () => {
+    const f = $("#afilter").value.trim().toLowerCase();
+    const hits = facets.artists.filter((x) => !f || x.name.toLowerCase().includes(f));
+    $("#alist").innerHTML = hits.slice(0, 300).map((x) => a(link("artist", x.id), q.get("artist") === x.id, x.name, x.albums)).join("")
+      + (hits.length > 300 ? `<p class="muted" style="padding:4px 8px">…and ${hits.length - 300} more. Filter the list.</p>` : "");
+  };
+  $("#afilter").oninput = listArtists; listArtists();
+  const all = () => api("tracks?" + params).then((r) => {
+    if (r.total > r.songs.length) toast(`Playing the first ${r.songs.length} of ${r.total} tracks`);
+    return r.songs;
+  });
+  $("#playAll").onclick = async () => { try { playList(await all()); } catch (e) { toast(e.message, true); } };
+  $("#shuffleAll").onclick = async () => { try { playList(shuffleArr(await all())); } catch (e) { toast(e.message, true); } };
+  $("#moreAll").onclick = (e) => menu(e, trackItems(all));
+  bindTracks(v, res.songs.slice(0, 30));
 }
 function albumCard(a) {
-  const cover = a.cover ? `style="background-image:url('/api/cover/${a.id}')"` : "";
+  const cover = a.cover ? `style="background-image:url('${coverUrl(a.id)}')"` : "";
   return `<a class="album" href="#/album/${a.id}">
-    <div class="cover" ${cover}>${a.cover ? "" : `<div class="ph">${esc(a.platform)}<br><b>${esc(initials(a.name))}</b></div>`}</div>
+    <div class="cover" ${cover}>${a.cover ? "" : `<div class="ph">${esc(a.platform)}<br><b>${esc(initials(a.name))}</b></div>`}
+      <button class="cplay" data-album="${a.id}" title="Play the album">▶</button></div>
     <div class="t">${esc(a.name)}</div>
     <div class="s">${esc(a.artists.map((x) => x.name).join(", "))}</div>
     <div class="s">${esc(a.platform)}${a.year ? " · " + a.year : ""} · ${a.songs} tracks · ${fmt(a.duration)}</div></a>`;
+}
+const albumTracks = (id) => api("tracks?album=" + encodeURIComponent(id)).then((r) => r.songs);
+document.addEventListener("click", async (e) => {      // ▶ on an album cover
+  const b = e.target.closest(".cplay");
+  if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  try { playList(await albumTracks(b.dataset.album)); } catch (err) { toast(err.message, true); }
+});
+// a table of tracks with ▶ and ⋯; opts.album shows the album column, opts.drag/remove for playlists
+function trackTable(tracks, opts = {}) {
+  return `<table><thead><tr><th></th>${opts.album ? "" : "<th>#</th>"}<th>Title</th>${opts.album ? "<th>Album</th>" : "<th>Engine</th>"}
+      <th style="text-align:right">Length</th><th></th></tr></thead>
+    <tbody>${tracks.map((t, i) => `<tr data-id="${t.id}" data-i="${i}" class="${t.id === playingId ? "playing" : ""}" ${opts.drag ? 'draggable="true"' : ""}>
+      <td style="width:40px"><button class="play" data-play="${i}" title="Play">▶</button></td>
+      ${opts.album ? "" : `<td class="num">${opts.drag ? i + 1 : t.track}</td>`}
+      <td>${esc(t.title)}${opts.album || (t.artist && t.artist !== opts.albumArtist) ? `<div class="muted">${esc(t.artist)}</div>` : ""}
+        ${opts.files ? `<div class="mono muted">${esc(t.file)}${t.sub ? " #" + t.sub : ""}</div>` : ""}</td>
+      ${opts.album ? `<td><a class="link" href="#/album/${t.album_id}">${esc(t.album)}</a><div class="muted">${esc(t.platform)}</div></td>`
+        : `<td class="muted">${esc(t.engine)}</td>`}
+      <td class="len">${fmt(t.duration)}</td>
+      <td class="actions">${opts.remove ? `<button class="more" data-rm="${i}" title="Remove from the playlist">✕</button>` : ""}
+        <button class="more" data-more="${i}" title="More">⋯</button></td></tr>`).join("")}</tbody></table>`;
+}
+function bindTracks(root, tracks) {
+  root.querySelectorAll("[data-play]").forEach((b) => (b.onclick = () => play(tracks[+b.dataset.play], tracks)));
+  root.querySelectorAll("[data-more]").forEach((b) => (b.onclick = (e) => {
+    const t = tracks[+b.dataset.more]; menu(e, trackItems(() => [t], t));
+  }));
+  root.querySelectorAll("tr[data-i]").forEach((r) => (r.ondblclick = () => play(tracks[+r.dataset.i], tracks)));
 }
 
 // --- album ----------------------------------------------------------------------------------
@@ -432,31 +820,35 @@ async function viewAlbum(v, id) {
   const a = await api("album/" + encodeURIComponent(id));
   const stateChip = { untouched: ["ok", "generated, untouched"], edited: ["warn", "edited by hand"],
     legacy: ["warn", "older version"], missing: ["bad", "missing"] }[a.toml_state];
+  const albumArtist = a.artists.map((x) => x.name).join(", ");
   v.innerHTML = `
     <div class="ahead">
-      <div class="cover" ${a.cover ? `style="background-image:url('/api/cover/${a.id}')"` : ""}>
-        ${a.cover ? "" : `<div class="ph">${esc(a.platform)}<br><b>${esc(initials(a.name))}</b></div>`}</div>
       <div>
-        <p class="muted" style="margin:0"><a class="link" href="#/library?platform=${encodeURIComponent(a.platform)}">${esc(a.platform)}</a>${a.year ? " · " + a.year : ""}</p>
+        <div class="cover" id="acover" ${a.cover ? `style="background-image:url('${coverUrl(a.id)}?t=${Date.now()}')"` : ""}>
+          ${a.cover ? "" : `<div class="ph">${esc(a.platform)}<br><b>${esc(initials(a.name))}</b></div>`}</div>
+        ${a.writable ? `<div class="row" style="margin-top:8px">
+          <label class="button" style="padding:4px 10px;font-size:13px">Change cover…<input type="file" id="coverFile" accept="image/jpeg,image/png" hidden></label>
+          ${a.cover_uploaded ? `<button id="coverDel" style="padding:4px 10px;font-size:13px" title="Use the rip's own image again">Remove</button>` : ""}</div>` : ""}
+      </div>
+      <div>
+        <p class="muted" style="margin:0"><a class="link" href="#/library?platform=${encodeURIComponent(a.platform)}">${esc(a.platform)}</a>${a.year ? ` · <a class="link" href="#/library?year=${a.year}">${a.year}</a>` : ""}</p>
         <h1 style="font-size:28px">${esc(a.name)}</h1>
         <p>${a.artists.map((x) => `<a class="link" href="#/library?artist=${x.id}">${esc(x.name)}</a>`).join(", ")}</p>
         <div class="chips">
           ${a.region ? `<span class="chip">${esc(a.region)}</span>` : ""}
-          ${a.chips.map((c) => `<span class="chip">${esc(c)}</span>`).join("")}
+          ${a.chips.map((c) => `<a class="chip" href="#/library?chip=${encodeURIComponent(c)}">${esc(c)}</a>`).join("")}
           <span class="chip">${a.songs} tracks · ${fmt(a.duration)}</span></div>
+        <div class="row" style="margin-top:16px">
+          <button class="primary" id="aPlay">▶ Play</button>
+          <button id="aShuffle">🔀 Shuffle</button>
+          <button id="aQueue">Add to queue</button>
+          <button class="more" id="aMore" title="More">⋯</button>
+        </div>
         <p class="mono muted">${esc(a.game_key)}</p>
       </div>
     </div>
     <div class="two">
-      <section class="card"><h2>Tracks</h2>
-        <table><thead><tr><th></th><th>#</th><th>Title</th><th>Engine</th><th style="text-align:right">Length</th></tr></thead>
-        <tbody>${a.tracks.map((t, i) => `<tr data-id="${t.id}" class="${t.id === playingId ? "playing" : ""}">
-          <td style="width:40px"><button class="play" data-i="${i}" title="Play">▶</button></td>
-          <td class="num">${t.track}</td>
-          <td>${esc(t.title)}${t.artist && t.artist !== a.artists.map((x) => x.name).join(", ") ? `<div class="muted">${esc(t.artist)}</div>` : ""}
-            <div class="mono muted">${esc(t.file)}${t.sub ? " #" + t.sub : ""}</div></td>
-          <td class="muted">${esc(t.engine)}</td><td class="len">${fmt(t.duration)}</td></tr>`).join("")}</tbody></table>
-      </section>
+      <section class="card"><h2>Tracks</h2>${trackTable(a.tracks, { files: true, albumArtist })}</section>
       <section class="card"><h2>album.toml</h2>
         <div class="row" style="justify-content:space-between;margin-bottom:10px">
           <span class="chip ${stateChip[0]}">${stateChip[1]}</span>
@@ -467,8 +859,7 @@ async function viewAlbum(v, id) {
           <button id="revert">Revert</button>
           <span style="flex:1"></span>
           <button class="danger" id="regen" ${a.writable ? "" : "disabled"}>Regenerate…</button></div>
-        <p class="muted" style="margin-top:12px">Saving marks the file as edited, so it is never overwritten automatically.
-          Changes show up in Music Assistant after its next sync.</p>
+        <p class="muted" style="margin-top:12px">Saving marks the file as edited, so it is never overwritten automatically.</p>
       </section>
       <section class="card"><h2>Title map</h2>
         <p class="muted">${a.titles_builtin ? `Built-in map in use: <span class="mono">${esc(a.titles_builtin)}</span>. ` : ""}
@@ -482,7 +873,23 @@ async function viewAlbum(v, id) {
              title="The album's current titles in vgmstream's !tags.m3u format, e.g. to share with the rip's author">Export !tags.m3u</a></div>
       </section>
     </div>`;
-  v.querySelectorAll("button.play").forEach((b) => (b.onclick = () => play(a.tracks[+b.dataset.i], a.name, a.tracks)));
+  bindTracks(v, a.tracks);
+  $("#aPlay").onclick = () => playList(a.tracks);
+  $("#aShuffle").onclick = () => playList(shuffleArr(a.tracks.slice()));
+  $("#aQueue").onclick = () => enqueue(a.tracks);
+  $("#aMore").onclick = (e) => menu(e, trackItems(() => a.tracks).slice(1));
+  if ($("#coverFile")) $("#coverFile").onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try {
+      await api(`album/${a.id}/cover`, { method: "POST", headers: { "Content-Type": f.type }, body: f });
+      toast("Cover saved"); route();
+    } catch (err) { toast(err.message, true); }
+  };
+  if ($("#coverDel")) $("#coverDel").onclick = async () => {
+    try { await api(`album/${a.id}/cover/delete`, { method: "POST" }); toast("Uploaded cover removed"); setTimeout(route, 800); }
+    catch (err) { toast(err.message, true); }
+  };
   $("#saveTitles").onclick = async () => {
     try {
       const r = await api(`album/${a.id}/titles`, { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" },
@@ -510,6 +917,89 @@ async function viewAlbum(v, id) {
         toast("Regenerated; re-indexing"); setTimeout(route, 1200);
       } catch (e) { closeModal(); toast(e.message, true); }
     };
+  };
+}
+
+// --- playlists ------------------------------------------------------------------------------
+function mosaic(p) {
+  const c = p.covers || [];
+  if (!c.length) return `<div class="cover"><div class="ph">PLAYLIST<br><b>${esc(initials(p.name))}</b></div></div>`;
+  const cells = c.length >= 4 ? c.slice(0, 4) : [c[0]];
+  return `<div class="cover mosaic ${cells.length === 1 ? "one" : ""}">${cells.map((id) => `<div style="background-image:url('${coverUrl(id)}')"></div>`).join("")}</div>`;
+}
+async function viewPlaylists(v) {
+  const r = await api("playlists");
+  v.innerHTML = `
+    <div class="row" style="justify-content:space-between;margin-bottom:16px">
+      <div><h1>Playlists</h1><span class="muted">${r.playlists.length} playlists · saved in <span class="mono">/meta/_playlists</span>, also visible to Subsonic apps</span></div>
+      <button class="primary" id="plNew" ${r.writable ? "" : "disabled"}>New playlist</button></div>
+    <div class="albums">${r.playlists.map((p) => `<a class="album" href="#/playlist/${p.id}">${mosaic(p)}
+        <div class="t">${esc(p.name)}</div><div class="s">${p.songs} tracks · ${fmt(p.duration)}</div></a>`).join("")
+      || `<p class="muted">No playlists yet. Make one here, or use “Add to playlist…” on any track, album or the queue.</p>`}</div>`;
+  $("#plNew").onclick = () => {
+    modal(`<h1>New playlist</h1><input type="text" id="plName" placeholder="Name">
+      <div class="row" style="justify-content:flex-end;margin-top:16px"><button onclick="closeModal()">Cancel</button>
+        <button class="primary" id="go">Create</button></div>`);
+    $("#plName").focus();
+    const go = async () => {
+      try { const p = await post("playlists", { name: $("#plName").value }); closeModal(); location.hash = "#/playlist/" + p.id; }
+      catch (e) { toast(e.message, true); }
+    };
+    $("#go").onclick = go;
+    $("#plName").onkeydown = (e) => { if (e.key === "Enter") go(); };
+  };
+}
+async function viewPlaylist(v, id) {
+  const p = await api("playlist/" + encodeURIComponent(id));
+  const t = p.tracks;
+  const save = async (body, msg) => {
+    try { await post("playlist/" + p.id, body); if (msg) toast(msg); route(); }
+    catch (e) { toast(e.message, true); }
+  };
+  v.innerHTML = `
+    <div class="ahead">
+      ${mosaic(p)}
+      <div>
+        <p class="muted" style="margin:0"><a class="link" href="#/playlists">Playlists</a></p>
+        <h1 style="font-size:28px">${esc(p.name)}</h1>
+        ${p.comment ? `<p>${esc(p.comment)}</p>` : ""}
+        <div class="chips"><span class="chip">${p.songs} tracks · ${fmt(p.duration)}</span>
+          ${p.missing ? `<span class="chip warn" title="Files that are no longer in the library. They stay in the playlist file.">${p.missing} missing</span>` : ""}</div>
+        <div class="row" style="margin-top:16px">
+          <button class="primary" id="pPlay" ${t.length ? "" : "disabled"}>▶ Play</button>
+          <button id="pShuf" ${t.length ? "" : "disabled"}>🔀 Shuffle</button>
+          <button id="pQ" ${t.length ? "" : "disabled"}>Add to queue</button>
+          <span style="flex:1"></span>
+          <button id="pRename" ${p.writable ? "" : "disabled"}>Rename…</button>
+          <button class="danger" id="pDel" ${p.writable ? "" : "disabled"}>Delete</button>
+        </div>
+      </div>
+    </div>
+    <section class="card">${t.length ? trackTable(t, { album: true, drag: p.writable, remove: p.writable })
+      : `<p class="muted">Empty. Use “Add to playlist…” on tracks and albums in the library.</p>`}
+      ${t.length && p.writable ? `<p class="muted">Drag rows to change the order.</p>` : ""}</section>`;
+  bindTracks(v, t);
+  $("#pPlay").onclick = () => playList(t);
+  $("#pShuf").onclick = () => playList(shuffleArr(t.slice()));
+  $("#pQ").onclick = () => enqueue(t);
+  v.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => {
+    const ids = t.map((x) => x.id); ids.splice(+b.dataset.rm, 1); save({ songs: ids });
+  }));
+  dragSort(v.querySelector("tbody"), "tr[data-i]", (from, to) => {
+    const ids = t.map((x) => x.id), [m] = ids.splice(from, 1);
+    ids.splice(to > from ? to - 1 : to, 0, m); save({ songs: ids });
+  });
+  $("#pRename").onclick = () => {
+    modal(`<h1>Rename playlist</h1><input type="text" id="plName" value="${esc(p.name)}">
+      <p class="muted">Comment</p><input type="text" id="plComment" value="${esc(p.comment)}">
+      <div class="row" style="justify-content:flex-end;margin-top:16px"><button onclick="closeModal()">Cancel</button>
+        <button class="primary" id="go">Save</button></div>`);
+    $("#go").onclick = () => { closeModal(); save({ name: $("#plName").value, comment: $("#plComment").value }); };
+  };
+  $("#pDel").onclick = async () => {
+    if (!confirm(`Delete the playlist “${p.name}”? The music itself is not touched.`)) return;
+    try { await post(`playlist/${p.id}/delete`); toast("Playlist deleted"); location.hash = "#/playlists"; }
+    catch (e) { toast(e.message, true); }
   };
 }
 
@@ -654,6 +1144,7 @@ async function refreshVersion() {
 }
 refreshVersion();
 setInterval(() => { if (!document.hidden) refreshVersion(); }, 60000);
+restoreQueue();
 route();
 loadDevices();
 </script>

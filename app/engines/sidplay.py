@@ -113,6 +113,11 @@ class SidplayEngine(Engine):
     def available(self) -> bool:
         return bool(self.cli and self.ffmpeg)
 
+    def voices(self, path: Path, track: TrackInfo | None = None) -> list[str]:
+        # one SID chip has three voices; 2SID/3SID tunes have more chips, but the CLI
+        # renders a mix, so this is a description, not a control
+        return ["Voice 1", "Voice 2", "Voice 3"]
+
     def probe(self, path: Path) -> list[TrackInfo]:
         data = path.read_bytes()
         h = _sid_header(data)

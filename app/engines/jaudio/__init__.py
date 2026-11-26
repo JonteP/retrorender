@@ -93,6 +93,22 @@ def streamed_twin(bms: Path) -> Optional[Path]:
 class JAudioEngine(Engine):
     name = "jaudio"
     extensions = (".bms", ".arc")
+    insight = "sequence"
+
+    @property
+    def controls(self):
+        return ({"key": "fx_send", "label": "Reverb send", "min": 0.0, "max": 1.0,
+                 "step": 0.05, "default": self.fx_send},)
+
+    def voices(self, path: Path, track: TrackInfo | None = None) -> list[str]:
+        """The sequence's tracks that play notes (markers and silent tracks left out)."""
+        from .render import track_names
+        idx = track.index if track else 0
+        data = next((d for i, _, d in self._sequences(path) if i == idx), None)
+        if data is None:
+            return []
+        _, version = self._banks(path)
+        return track_names(data, version=version)
 
     def __init__(self, sample_rate: int = 44100, fx_send: float = 0.35):
         self.sample_rate = sample_rate

@@ -50,6 +50,8 @@ class Session:
 
     def __init__(self, mgr: "Outputs", dev, songs: list, index: int):
         self.mgr, self.dev, self.songs, self.index = mgr, dev, songs, index
+        self.repeat = "off"         # off | all | one
+        self.gen = 0                # bumped by every jump, so a replaced song is noticed
         self.stopped = False
         self.error = ""
         self.started_at = 0.0
@@ -90,6 +92,8 @@ class Session:
                     break
                 continue
             if self._follow():
+                if self.repeat == "one":
+                    continue
                 if not self._advance(1):
                     break
         self.stopped = True
@@ -98,11 +102,11 @@ class Session:
         """Wait until the current track ends. True = finished, go on; False = replaced or
         stopped. States only count once the device reports our own URL: right after a load
         it may still report the previous track (an LG TV does while it asks for approval)."""
-        idx = self.index
-        while not self.stopped and self.index == idx:
+        gen = self.gen
+        while not self.stopped and self.gen == gen:
             self._wake.wait(2.0)
             self._wake.clear()
-            if self.stopped or self.index != idx:
+            if self.stopped or self.gen != gen:
                 return False
             try:
                 st = self.dev.poll() if isinstance(self.dev, DlnaDevice) else self.dev.status
@@ -135,19 +139,44 @@ class Session:
 
     def _advance(self, step: int) -> bool:
         nxt = self.index + step
+        if self.repeat == "all" and self.songs:
+            nxt %= len(self.songs)
         if 0 <= nxt < len(self.songs):
             self.index = nxt
+            self.gen += 1
             return True
         return False
 
     # user commands
     def jump(self, step: int):
-        if 0 <= self.index + step < len(self.songs):
-            self.index += step
-            self._wake.set()
-            if self.stopped:
-                self.stopped = False
-                threading.Thread(target=self._run, daemon=True).start()
+        n = len(self.songs)
+        nxt = (self.index + step) % n if self.repeat == "all" and n else self.index + step
+        if 0 <= nxt < n:
+            self.goto(nxt)
+
+    def goto(self, index: int):
+        if not 0 <= index < len(self.songs):
+            return
+        self.index = index
+        self.gen += 1
+        self._wake.set()
+        if self.stopped:
+            self.stopped = False
+            threading.Thread(target=self._run, daemon=True).start()
+
+    def replace(self, songs: list, index: int):
+        """A changed queue (reordered, added to, removed from). If the current song is
+        still current, it keeps playing; otherwise the new current song starts."""
+        if not songs:
+            return self.stop()
+        index = max(0, min(index, len(songs) - 1))
+        same = self.song is not None and songs[index].id == self.song.id
+        with self._lock:
+            self.songs = songs
+            if same:
+                self.index = index          # same object position moved: no restart
+                return
+        self.goto(index)
 
     def stop(self):
         self.stopped = True
@@ -161,6 +190,7 @@ class Session:
         s = self.song
         st = getattr(self.dev, "status", {}) or {}
         return {"index": self.index, "count": len(self.songs), "stopped": self.stopped,
+                "repeat": self.repeat, "songs": [x.id for x in self.songs],
                 "error": self.error, "state": "STOPPED" if self.stopped else st.get("state"),
                 "position": st.get("position"),
                 "song": {"id": s.id, "title": s.title, "artist": s.artist,
@@ -254,19 +284,36 @@ class Outputs:
                         "session": s.info() if s else None})
         return out
 
-    def play(self, dev_id: str, song_ids: list[str], start: int = 0) -> dict:
-        dev = self.devices.get(dev_id)
-        if dev is None:
-            raise KeyError("unknown device")
+    def _songs(self, song_ids: list[str]) -> list:
         songs = [self.lib.index.songs[i] for i in song_ids if i in self.lib.index.songs]
         if not songs:
             raise ValueError("nothing to play")
+        return songs
+
+    def play(self, dev_id: str, song_ids: list[str], start: int = 0,
+             repeat: str = "off") -> dict:
+        dev = self.devices.get(dev_id)
+        if dev is None:
+            raise KeyError("unknown device")
+        songs = self._songs(song_ids)
         old = self.sessions.pop(dev_id, None)
         if old:
             old.stopped = True
             old._wake.set()
-        self.sessions[dev_id] = Session(self, dev, songs, max(0, min(start, len(songs) - 1)))
-        return self.sessions[dev_id].info()
+        s = Session(self, dev, songs, max(0, min(start, len(songs) - 1)))
+        s.repeat = repeat if repeat in ("off", "all", "one") else "off"
+        self.sessions[dev_id] = s
+        return s.info()
+
+    def queue(self, dev_id: str, song_ids: list[str], index: int) -> dict:
+        """Change the queue of a playing session without restarting the current song."""
+        if dev_id not in self.devices:
+            raise KeyError("unknown device")
+        s = self.sessions.get(dev_id)
+        if s is None or s.stopped:
+            return self.play(dev_id, song_ids, index)
+        s.replace(self._songs(song_ids), index)
+        return s.info()
 
     def control(self, dev_id: str, action: str, value: Optional[float] = None) -> dict:
         dev = self.devices.get(dev_id)
@@ -281,6 +328,10 @@ class Outputs:
             s.jump(1 if action == "next" else -1)
         elif action == "stop" and s:
             s.stop()
+        elif action == "goto" and s and value is not None:
+            s.goto(int(value))
+        elif action == "repeat" and s and value in ("off", "all", "one"):
+            s.repeat = value
         elif action == "volume" and value is not None:
             dev.set_volume(float(value))
         else:

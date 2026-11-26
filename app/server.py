@@ -43,7 +43,7 @@ from policy import plan, settings_for, shape
 from subsonic import Subsonic
 from web import WebUI
 
-VERSION = "0.12.3"
+VERSION = "0.13.0"
 BUILD = {"commit": os.environ.get("RETRO_BUILD_COMMIT", "local")[:7],
          "date": os.environ.get("RETRO_BUILD_DATE", "")}
 
@@ -111,7 +111,10 @@ def health() -> dict:
 
 from updates import UpdateCheck  # noqa: E402
 UPD = UpdateCheck(CFG, BUILD)
-WEB = WebUI(CFG, LIB, META, CAT, health, probe, JOSHW)
+from playlists import Playlists  # noqa: E402
+PLAYLISTS = Playlists(META.root if META.enabled else None, META.writable, lambda: LIB.index)
+SUB.playlists = PLAYLISTS
+WEB = WebUI(CFG, LIB, META, CAT, health, probe, JOSHW, playlists=PLAYLISTS, registry=REG)
 
 
 def wav_header(frames: int, rate: int) -> bytes:
@@ -127,14 +130,18 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- helpers --------------------------------------------------------
     def _q(self) -> dict:
-        q = {k: v[-1] for k, v in parse_qs(urlparse(self.path).query).items()}
+        multi = parse_qs(urlparse(self.path).query)
+        q = {k: v[-1] for k, v in multi.items()}
         if self.command == "POST":
             n = int(self.headers.get("Content-Length") or 0)
             if n and "form-urlencoded" in (self.headers.get("Content-Type") or ""):
                 self._raw_body = self.rfile.read(n)       # kept for handlers that want the body
                 form = parse_qs(self._raw_body.decode("utf-8", "replace"))
                 for k, v in form.items():
-                    q.setdefault(k, v[-1])     # query-parametrar vinner
+                    q.setdefault(k, v[-1])     # query parameters win
+                    multi.setdefault(k, v)
+        # repeated parameters (Subsonic's songId=…&songId=…) as lists under "key[]"
+        q.update({k + "[]": v for k, v in multi.items() if not k.endswith("[]")})
         return q
 
     def _resolve(self, rel: str) -> Path:

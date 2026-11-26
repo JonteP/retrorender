@@ -381,7 +381,27 @@ class Library:
             own = split_names(so.composer)
             so.artists = [idx.artist(n) for n in own] if own else list(al.artists)
 
+    def cover_target(self, key: str, ext: str) -> Path:
+        """Where an uploaded cover for this album is stored in /meta."""
+        p = self.meta.path_for(key)
+        if key.startswith("dir:"):
+            return p.parent / f"cover.{ext}"
+        return p.with_name(p.name.removesuffix(".album.toml") + f".cover.{ext}")
+
+    def uploaded_cover(self, key: str) -> str | None:
+        if not self.meta.enabled:
+            return None
+        for ext in ("jpg", "png"):
+            p = self.cover_target(key, ext)
+            if p.is_file():
+                return str(p)
+        return None
+
     def _cover(self, meta: dict | None, d: Path, key: str) -> str | None:
+        """An uploaded cover first, then album.toml's cover = "…", then the rip's own image."""
+        up = self.uploaded_cover(key)
+        if up:
+            return up
         meta_dir = self.meta.path_for(key).parent if self.meta.enabled else None
         wanted = ((meta or {}).get("album", {}) or {}).get("cover")
         places = [x for x in (meta_dir, d) if x]
