@@ -27,6 +27,20 @@ Containern läser biblioteket skrivskyddat och kör som användaren `apps` (568)
 
 `/health` och webbgränssnittet (uppe till höger, och under Overview → Build) visar versionsnumret plus den commit imagen byggdes från. Den ska stämma med senaste commit på `main` på GitHub (de sju första tecknen). Visar den ett äldre värde är imagen inte uppdaterad. Vänta tills Actions-bygget är klart och starta om appen igen.
 
+## Spela på TV och högtalare (nytt i v0.12)
+
+Webbgränssnittet kan spela direkt på Chromecast- och DLNA-apparater i nätet (TV, nätverks-
+högtalare) — utan Home Assistant eller Music Assistant. Välj apparat i listan nere till höger
+("This browser" = i webbläsaren); play på en låt köar resten av albumet. Föregående/nästa,
+paus, stopp och volym styr apparaten. Apparaten hämtar ljudet själv från `/render` (FLAC om
+den klarar det, annars WAV/MP3) och får titel, album och omslag.
+
+- Apparaterna hittas automatiskt om containern kör med `network_mode: host` (se
+  `compose.yaml`; ta då bort `ports:`). Annars: lista dem under `[outputs]` i config.toml.
+- Med host-nätverk nås retrorender på alla NAS:ens gränssnitt (även Tailscale) — sätt ett
+  riktigt lösenord i `[subsonic]`/`[web]`.
+- `/render` och omslag via `/art/<album>` kräver ingen inloggning (apparaterna kan inte logga in).
+
 ## Wind Waker och JAudio 1 (nytt i v0.11)
 
 Motorn klarar nu även den äldre JAudio-versionen (The Wind Waker). Där ligger sekvenserna

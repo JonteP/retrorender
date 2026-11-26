@@ -83,3 +83,17 @@ temp_limit_gb = 20                # temporary downloads above this are removed, 
 # Console names for joshw systems (shown as genre in MA); defaults exist for common systems
 # [joshw.platforms]
 # wii = "Nintendo Wii"
+
+[outputs]
+# Play on Chromecast and DLNA/UPnP devices (TVs, network speakers) from the web UI.
+enabled = true
+# Find devices automatically (needs network_mode: host for the container).
+discover = true
+rediscover_minutes = 10
+# Devices to add by hand, e.g. when discovery cannot reach them:
+# cast = ["192.168.1.50"]                                  # Chromecast IP (or "ip:port")
+# dlna = ["http://192.168.1.60:1400/description.xml"]      # renderer description URL
+# Address devices use to fetch the audio; empty = worked out per device.
+# base_url = "http://192.168.1.126:8090"
+# Stream format: "auto" (FLAC where supported, else WAV/MP3), "flac", "wav" or "mp3".
+format = "auto"

@@ -95,6 +95,13 @@
   .player .now { min-width: 0; flex: 0 1 380px; white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; }
   .player audio { flex: 1; height: 36px; }
+  .player .ctl { display: flex; gap: 6px; align-items: center; }
+  .player .ctl button { padding: 6px 10px; min-width: 38px; }
+  .player .remote { flex: 1; display: flex; gap: 12px; align-items: center; color: var(--muted); }
+  .player select { padding: 7px 10px; color: var(--text); background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 8px; font: inherit; max-width: 230px; }
+  .player input[type=range] { width: 110px; }
+  .player [hidden] { display: none !important; }
   .toast { position: fixed; right: 24px; bottom: 80px; z-index: 9; padding: 10px 16px;
     border-radius: 8px; background: var(--panel2); border: 1px solid var(--line);
     opacity: 0; transform: translateY(8px); transition: .2s; pointer-events: none; }
@@ -141,7 +148,20 @@
 
 <div class="player">
   <div class="now"><span class="muted">Not playing</span></div>
+  <div class="ctl">
+    <button id="pPrev" title="Previous">⏮</button>
+    <button id="pToggle" title="Pause / play">⏯</button>
+    <button id="pNext" title="Next">⏭</button>
+  </div>
   <audio id="audio" controls preload="none"></audio>
+  <div class="remote" id="remote" hidden>
+    <span id="rState"></span>
+    <button id="pStop" title="Stop">⏹</button>
+    <input type="range" id="rVol" min="0" max="100" step="1" title="Volume">
+  </div>
+  <select id="target" title="Where to play">
+    <option value="browser">This browser</option>
+  </select>
 </div>
 <div class="toast" id="toast"></div>
 <div class="modal" id="modal"><div class="box" id="modalbox"></div></div>
@@ -171,15 +191,103 @@ function modal(html) { $("#modalbox").innerHTML = html; $("#modal").classList.ad
 function closeModal() { $("#modal").classList.remove("show"); }
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
 
-// --- player -------------------------------------------------------------------------------
-let playingId = null;
-function play(t, album) {
-  const a = $("#audio");
-  a.src = t.render; a.play().catch(() => {});
-  playingId = t.id;
-  $(".player .now").innerHTML = `<b>${esc(t.title)}</b> <span class="muted">· ${esc(album)}</span>`;
+// --- player: this browser or a Cast/DLNA device on the network ---------------------------
+let playingId = null, queue = [], qi = 0, qAlbum = "", devices = [], remotePoll = null;
+let target = "browser";
+try { target = localStorage.getItem("retro.target") || "browser"; } catch (e) { /* no storage */ }
+const post = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body || {}) });
+
+function setNow(t, album, extra = "") {
+  playingId = t ? t.id : null;
+  $(".player .now").innerHTML = t
+    ? `<b>${esc(t.title)}</b> <span class="muted">· ${esc(album || "")}${extra}</span>`
+    : `<span class="muted">Not playing</span>`;
   document.querySelectorAll("tr[data-id]").forEach((r) =>
     r.classList.toggle("playing", r.dataset.id === playingId));
+}
+function play(t, album, list) {
+  queue = list && list.length ? list : [t];
+  qi = Math.max(0, queue.indexOf(t));
+  qAlbum = album;
+  if (target === "browser") return playLocal();
+  playRemote();
+}
+function playLocal() {
+  const a = $("#audio"), t = queue[qi];
+  if (!t) return;
+  a.src = t.render; a.play().catch(() => {});
+  setNow(t, qAlbum);
+}
+$("#audio").addEventListener("ended", () => {
+  if (target === "browser" && qi + 1 < queue.length) { qi++; playLocal(); }
+});
+async function playRemote() {
+  try {
+    await post(`outputs/${encodeURIComponent(target)}/play`, { songs: queue.map((t) => t.id), start: qi });
+    setNow(queue[qi], qAlbum, " · starting…");
+    pollRemote();
+  } catch (e) { toast(e.message, true); }
+}
+async function remote(action, value) {
+  try { await post(`outputs/${encodeURIComponent(target)}/${action}`, { value }); pollRemote(); }
+  catch (e) { toast(e.message, true); }
+}
+$("#pPrev").onclick = () => {
+  if (target !== "browser") return remote("prev");
+  if (qi > 0) { qi--; playLocal(); }
+};
+$("#pNext").onclick = () => {
+  if (target !== "browser") return remote("next");
+  if (qi + 1 < queue.length) { qi++; playLocal(); }
+};
+$("#pToggle").onclick = () => {
+  if (target === "browser") { const a = $("#audio"); return a.paused ? a.play() : a.pause(); }
+  const d = devices.find((x) => x.id === target);
+  remote(d && d.session && d.session.state === "PAUSED" ? "resume" : "pause");
+};
+$("#pStop").onclick = () => remote("stop");
+$("#rVol").onchange = (e) => remote("volume", e.target.value / 100);
+
+async function loadDevices(rediscover = false) {
+  try {
+    const r = rediscover ? await post("outputs/discover") : await api("outputs");
+    devices = r.devices || [];
+  } catch (e) { devices = []; }
+  const sel = $("#target");
+  sel.innerHTML = `<option value="browser">This browser</option>` +
+    devices.map((d) => `<option value="${esc(d.id)}">${esc(d.name)} (${d.kind === "cast" ? "Cast" : "DLNA"})</option>`).join("") +
+    `<option value="__rescan">Search for devices…</option>`;
+  if (target !== "browser" && !devices.some((d) => d.id === target)) target = "browser";
+  sel.value = target;
+  showTarget();
+}
+function showTarget() {
+  const remoteOn = target !== "browser";
+  $("#audio").hidden = remoteOn;
+  $("#remote").hidden = !remoteOn;
+  clearInterval(remotePoll);
+  if (remoteOn) { pollRemote(); remotePoll = setInterval(pollRemote, 2500); }
+}
+$("#target").onchange = async (e) => {
+  if (e.target.value === "__rescan") {
+    toast("Searching the network…");
+    await loadDevices(true);
+    return toast(`${devices.length} device(s) found`);
+  }
+  target = e.target.value;
+  try { localStorage.setItem("retro.target", target); } catch (err) { /* no storage */ }
+  if (target !== "browser") $("#audio").pause();
+  showTarget();
+};
+async function pollRemote() {
+  if (target === "browser" || document.hidden) return;
+  try { devices = (await api("outputs")).devices || devices; } catch (e) { return; }
+  const d = devices.find((x) => x.id === target), s = d && d.session;
+  if (!s || !s.song) { $("#rState").textContent = d ? "Idle" : "Device gone"; return; }
+  const st = { PLAYING: "Playing", PAUSED: "Paused", BUFFERING: "Loading", STOPPED: "Stopped", IDLE: "Waiting" }[s.state] || s.state || "";
+  $("#rState").textContent = `${st} · ${s.index + 1}/${s.count}` + (s.error ? ` · ${s.error}` : "");
+  setNow({ id: s.song.id, title: s.song.title }, s.song.artist);
 }
 
 // --- router ---------------------------------------------------------------------------------
@@ -370,7 +478,7 @@ async function viewAlbum(v, id) {
              title="The album's current titles in vgmstream's !tags.m3u format, e.g. to share with the rip's author">Export !tags.m3u</a></div>
       </section>
     </div>`;
-  v.querySelectorAll("button.play").forEach((b) => (b.onclick = () => play(a.tracks[+b.dataset.i], a.name)));
+  v.querySelectorAll("button.play").forEach((b) => (b.onclick = () => play(a.tracks[+b.dataset.i], a.name, a.tracks)));
   $("#saveTitles").onclick = async () => {
     try {
       const r = await api(`album/${a.id}/titles`, { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" },
@@ -529,6 +637,7 @@ function remoteRow(r) {
 const verText = (s) => `v${s.version} · ${s.build?.commit || "local"}`;
 api("status").then((s) => ($("#ver").textContent = verText(s))).catch(() => {});
 route();
+loadDevices();
 </script>
 </body>
 </html>

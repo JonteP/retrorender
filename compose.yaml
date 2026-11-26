@@ -7,8 +7,9 @@ services:
     pull_policy: always
     container_name: retrorender
     restart: unless-stopped
-    ports:
-      - "8090:8090"
+    # Host network so Chromecast/DLNA devices can be found (multicast) and can reach the
+    # stream. Without it: use "ports: - 8090:8090" and list devices under [outputs].
+    network_mode: host
     volumes:
       - /mnt/tank/media/retro:/library:ro               # the library, read-only
       - /mnt/tank/apps/retrorender/meta:/meta           # album.toml, writable (include in backups)
