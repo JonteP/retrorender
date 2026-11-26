@@ -27,6 +27,23 @@ Containern läser biblioteket skrivskyddat och kör som användaren `apps` (568)
 
 `/health` och webbgränssnittet (uppe till höger, och under Overview → Build) visar versionsnumret plus den commit imagen byggdes från. Den ska stämma med senaste commit på `main` på GitHub (de sju första tecknen). Visar den ett äldre värde är imagen inte uppdaterad. Vänta tills Actions-bygget är klart och starta om appen igen.
 
+## Sekvenserad Nintendo-musik, BMS (nytt i v0.10)
+
+Egen motor (`jaudio`) för JAudio2-musik från GameCube/Wii, t.ex. Super Mario Galaxy:
+sekvenserna (`.bms`) spelas med spelets egna instrument (`.baa` + `.aw`), byggd från de
+dekompilerade spelen (Twilight Princess, Galaxy). Formatnoteringar finns i `docs/jaudio.md`.
+
+- `.baa` hittas automatiskt i samma mapp, föräldramappen eller en syskonmapp (t.ex. `Waves`).
+- Sekvenser som bara hör till en orkesterinspelning (Galaxys `*_midi_cnv` med taktmarkörer
+  och lager som spelas ovanpå `.ast`-filen) döljs. Kvar blir de låtar som bara finns som BMS:
+  powerup-teman, banvalsmusik, jinglar m.m.
+- Undermappar i en joshw-nedladdning får albumnamnet från arkivet, t.ex.
+  "Super Mario Galaxy (sequenced)".
+- `jaudio_fx_send` under `[engines]` styr mängden eko (spelet sätter den per bana); 0 = torrt.
+- Loopar hittas exakt i sekvensen (intro + loop), så looppolicyn fungerar som för andra format.
+
+Ej ännu: vibrato/tremolo, IIR/FIR-filter, JAudio 1 (Wind Waker).
+
 ## TXTP och titelkartor (nytt i v0.9)
 
 **TXTP.** Rippar från GameCube/Wii har ofta `.txtp`-filer som säger åt vgmstream hur ett spår

@@ -33,7 +33,7 @@ RUN mkdir -p /out/bin /out/lib \
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 ca-certificates libgme0 libopenmpt0 sidplayfp ffmpeg zlib1g p7zip-full \
+        python3 python3-numpy ca-certificates libgme0 libopenmpt0 sidplayfp ffmpeg zlib1g p7zip-full \
         libmpg123-0 libvorbisfile3 libspeex1 libopus0 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=vgmstream /usr/local/bin/vgmstream-cli /usr/local/bin/vgmstream-cli

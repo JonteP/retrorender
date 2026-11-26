@@ -145,11 +145,19 @@ def parse_sidecars(d: Path) -> tuple[dict, dict, dict]:
     # .source.json is written by retrorender for synced downloads (e.g. joshw): the
     # archive's official title and release date, used when tags and playlists lack them
     src = d / ".source.json"
+    inherited = False
+    if not src.is_file() and (d.parent / ".source.json").is_file():
+        # a subfolder of a synced archive (e.g. "Seqs" with sequenced music)
+        src, inherited = d.parent / ".source.json", True
     if src.is_file():
         try:
             import json
             info = json.loads(src.read_text("utf-8"))
-            album.setdefault("album", info.get("album", ""))
+            name = info.get("album", "")
+            if inherited and name:
+                sub = d.name.lower()
+                name += " (sequenced)" if sub in ("seqs", "seq", "bms", "sequences") else f" - {d.name}"
+            album.setdefault("album", name)
             if info.get("date"):
                 album.setdefault("date", info["date"])
         except (OSError, ValueError):

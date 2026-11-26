@@ -18,6 +18,9 @@ vgm2wav_args = ["--loops={loops}", "--samplerate={rate}", "{in}", "-"]
 # Engine for VGM/VGZ: "auto" = libgme for Sega-only files, libvgm for the rest.
 # "libvgm" = libvgm for all VGM files, "gme" = libgme for all.
 vgm_engine = "auto"
+# Sequenced GameCube/Wii music (.bms, e.g. Super Mario Galaxy): how much of the game's
+# echo/reverb to add. The game sets this per level, not per song; 0 = dry.
+jaudio_fx_send = 0.35
 # HVSC song length database for SID (in HVSC under DOCUMENTS/)
 songlengths = "/library/C64/HVSC/DOCUMENTS/Songlengths.md5"
 # STIL.txt (subtune names) is found automatically next to Songlengths; otherwise set:

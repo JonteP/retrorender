@@ -6,6 +6,7 @@ from typing import Optional
 from . import vgmfile
 from .base import Engine, EngineError, TrackInfo
 from .gme import GmeEngine
+from .jaudio import JAudioEngine
 from .libvgm import LibvgmEngine
 from .openmpt import OpenmptEngine
 from .sidplay import SidplayEngine
@@ -33,6 +34,7 @@ class Registry:
             VgmstreamEngine(sr, cli=eng.get("vgmstream_cli", "vgmstream-cli")),
             SidplayEngine(sr, cli=eng.get("sidplayfp_cli", "sidplayfp"),
                           songlengths=eng.get("songlengths"), stil=eng.get("stil")),
+            JAudioEngine(sr, fx_send=float(eng.get("jaudio_fx_send", 0.35))),
         ]
         self.engines = [e for e in candidates if e.available()]
         self.missing = [e.name for e in candidates if not e.available()]
