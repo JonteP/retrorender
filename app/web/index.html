@@ -26,6 +26,9 @@
   nav a { padding: 6px 12px; border-radius: 8px; color: var(--muted); }
   nav a.on, nav a:hover { color: var(--text); background: var(--panel2); }
   header .ver { margin-left: auto; color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  header .upd { margin-left: auto; padding: 3px 10px; border-radius: 99px; background: var(--accent); color: #1b1407;
+    font-size: 12px; font-weight: 600; white-space: nowrap; cursor: help; }
+  header .upd:not([hidden]) + .ver { margin-left: 12px; }
   main { padding: 24px; padding-bottom: 110px; max-width: 1400px; margin: 0 auto; }
   h1 { font-size: 22px; margin: 0 0 4px; }
   h2 { font-size: 15px; margin: 0 0 12px; color: var(--muted); font-weight: 600;
@@ -142,6 +145,7 @@
     <a href="#/joshw" data-nav="joshw">joshw</a>
     <a href="#/catalog" data-nav="catalog">Catalog</a>
   </nav>
+  <span class="upd" id="upd" hidden></span>
   <div class="ver" id="ver"></div>
 </header>
 <main id="view"><p class="muted">Loading…</p></main>
@@ -315,7 +319,7 @@ window.addEventListener("hashchange", () => { closeModal(); route(); });
 // --- overview -------------------------------------------------------------------------------
 async function viewOverview(v) {
   const s = await api("status");
-  $("#ver").textContent = verText(s);
+  showVersion(s);
   const ix = s.index, cat = s.catalog || {};
   const built = ix.built ? new Date(ix.built * 1000).toLocaleString() : "–";
   v.innerHTML = `
@@ -635,7 +639,21 @@ function remoteRow(r) {
 }
 
 const verText = (s) => `v${s.version} · ${s.build?.commit || "local"}`;
-api("status").then((s) => ($("#ver").textContent = verText(s))).catch(() => {});
+function showVersion(s) {
+  $("#ver").textContent = verText(s);
+  const u = s.update || {}, b = $("#upd");
+  b.hidden = !u.available;
+  if (u.available) {
+    b.textContent = `Update ready: ${u.latest.commit}`;
+    b.title = `A newer image is built (${u.latest.commit}${u.latest.title ? ": " + u.latest.title : ""}). `
+      + "Restart the app in TrueNAS to get it.";
+  }
+}
+async function refreshVersion() {
+  try { showVersion(await api("status")); } catch (e) { /* offline */ }
+}
+refreshVersion();
+setInterval(() => { if (!document.hidden) refreshVersion(); }, 60000);
 route();
 loadDevices();
 </script>

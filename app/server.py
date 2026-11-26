@@ -43,7 +43,7 @@ from policy import plan, settings_for, shape
 from subsonic import Subsonic
 from web import WebUI
 
-VERSION = "0.12.2"
+VERSION = "0.12.3"
 BUILD = {"commit": os.environ.get("RETRO_BUILD_COMMIT", "local")[:7],
          "date": os.environ.get("RETRO_BUILD_DATE", "")}
 
@@ -92,7 +92,8 @@ SUB.on_star = JOSHW.pin_dir
 
 
 def health() -> dict:
-    return {"ok": True, "version": VERSION, "build": BUILD, "library": str(LIBRARY),
+    return {"ok": True, "version": VERSION, "build": BUILD, "update": UPD.status(),
+            "library": str(LIBRARY),
             "meta": {"dir": str(META.root) if META.enabled else None,
                      "writable": META.writable},
             "catalog": CAT.stats(),
@@ -108,6 +109,8 @@ def health() -> dict:
             "diagnostics": REG.diagnostics()}
 
 
+from updates import UpdateCheck  # noqa: E402
+UPD = UpdateCheck(CFG, BUILD)
 WEB = WebUI(CFG, LIB, META, CAT, health, probe, JOSHW)
 
 
@@ -438,6 +441,7 @@ def main():
                 JOSHW.refresh_all()               # each system at most once per refresh_hours
                 time.sleep(3600)
         threading.Thread(target=refresh_loop, daemon=True, name="joshw-refresh").start()
+    UPD.start()                               # "new version available" in the web UI
     from outputs import Outputs
     WEB.outputs = Outputs(CFG, LIB, port)     # Cast/DLNA players in the network
     WEB.outputs.start()
