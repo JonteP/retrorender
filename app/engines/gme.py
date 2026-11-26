@@ -86,7 +86,7 @@ class GmeEngine(Engine):
                 out.append(TrackInfo(
                     index=i, title=_s(inf.song), author=_s(inf.author),
                     game=_s(inf.game), system=_s(inf.system),
-                    # length gäller bara om spåret INTE har känd loop
+                    # length only applies if the track has NO known loop
                     length_s=None if loop else _ms(inf.length),
                     intro_s=intro if loop else None, loop_s=loop,
                     sample_rate=self.sample_rate,
@@ -101,7 +101,7 @@ class GmeEngine(Engine):
         emu = self._open(path)
         try:
             if self._autoload is not None:
-                self._autoload(emu, 0)        # ingen inbyggd fade, vi styr längden
+                self._autoload(emu, 0)        # no built-in fade, we control the length
             self.lib.gme_ignore_silence(emu, 1)
             err = self.lib.gme_start_track(emu, track.index)
             if err:

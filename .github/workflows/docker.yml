@@ -1,5 +1,7 @@
-# Builds the Docker image on every push to main and publishes it to
-# GitHub Container Registry as ghcr.io/<owner>/retrorender.
+# Runs the tests on every pull request and push to main. On main (and v* tags) the
+# Docker image is then built and published to GitHub Container Registry as
+# ghcr.io/<owner>/retrorender. Pull requests build the image without publishing it,
+# so a broken Dockerfile shows up before merging.
 # Tags: "latest" for main, the commit SHA, and "vX.Y.Z" for git tags.
 name: docker
 
@@ -7,6 +9,7 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -14,12 +17,34 @@ permissions:
   packages: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"          # same as the Debian bookworm image
+      - name: Libraries used by the engines
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgme0 libopenmpt0
+          pip install numpy
+      - name: Tests
+        run: |
+          python tests/test_txtp_titles.py
+          python tests/test_jaudio.py
+          python tests/test_outputs.py
+      - name: Compile all modules
+        run: python -m compileall -q app tests
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -35,7 +60,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |

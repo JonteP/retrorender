@@ -1,7 +1,7 @@
-"""Läser VGM/VGZ-headern: vilka ljudchip som används, längd, loop och GD3-taggar.
+"""Reads the VGM/VGZ header: which sound chips are used, length, loop and GD3 tags.
 
-Används för att välja motor: libgme klarar bara Segas chip (SN76489, YM2413, YM2612),
-allt annat (YM2151, OPN/OPL, OKI, NES APU, Game Boy ...) går till libvgm.
+Used to pick the engine: libgme only handles Sega's chips (SN76489, YM2413, YM2612),
+everything else (YM2151, OPN/OPL, OKI, NES APU, Game Boy ...) goes to libvgm.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 VGM_RATE = 44100
 
-# offset -> chipnamn (klockfält i headern, enligt VGM-specifikationen)
+# offset -> chip name (clock fields in the header, per the VGM specification)
 CLOCKS = {
     0x0C: "SN76489", 0x10: "YM2413", 0x2C: "YM2612", 0x30: "YM2151",
     0x38: "SegaPCM", 0x40: "RF5C68", 0x44: "YM2203", 0x48: "YM2608",
@@ -27,7 +27,7 @@ CLOCKS = {
 }
 GME_CHIPS = {"SN76489", "YM2413", "YM2612"}
 
-# GD3-fältens ordning
+# order of the GD3 fields
 _GD3 = ("title", "title_jp", "game", "game_jp", "system", "system_jp",
         "author", "author_jp", "date", "ripper", "notes")
 
@@ -56,7 +56,7 @@ def read_bytes(path: Path) -> bytes:
 def parse(path: Path) -> VgmHeader:
     d = read_bytes(path)
     if d[:4] != b"Vgm ":
-        raise ValueError("inte en VGM-fil")
+        raise ValueError("not a VGM file")
     u32 = lambda o: struct.unpack_from("<I", d, o)[0] if o + 4 <= len(d) else 0
     version = u32(0x08)
     data_start = 0x40

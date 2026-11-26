@@ -1,4 +1,4 @@
-"""libopenmpt via ctypes: MOD, XM, IT, S3M, MPTM och många fler trackerformat."""
+"""libopenmpt via ctypes: MOD, XM, IT, S3M, MPTM and many more tracker formats."""
 from __future__ import annotations
 
 import ctypes as C
@@ -53,7 +53,7 @@ class OpenmptEngine(Engine):
         mod = self.lib.openmpt_module_create_from_memory2(
             buf, len(data), None, None, None, None, C.byref(err), C.byref(msg), None)
         if not mod:
-            raise EngineError(f"openmpt: kunde inte öppna ({err.value})")
+            raise EngineError(f"openmpt: could not open ({err.value})")
         return mod
 
     def _meta(self, mod, key: str) -> str:
@@ -74,7 +74,7 @@ class OpenmptEngine(Engine):
             for i in range(n):
                 self.lib.openmpt_module_select_subsong(mod, i)
                 dur = self.lib.openmpt_module_get_duration_seconds(mod)
-                # Trackerlåtar hoppar oftast tillbaka till början: hela låten = en loop.
+                # Tracker songs usually jump back to the start: the whole song = one loop.
                 out.append(TrackInfo(
                     index=i, title=title if n == 1 else f"{title} ({i + 1})",
                     author=artist, system=kind, intro_s=0.0,
@@ -87,7 +87,7 @@ class OpenmptEngine(Engine):
         mod = self._open(path)
         try:
             self.lib.openmpt_module_select_subsong(mod, track.index)
-            self.lib.openmpt_module_set_repeat_count(mod, -1)   # oändligt, vi kapar
+            self.lib.openmpt_module_set_repeat_count(mod, -1)   # endless, we cut
             chunk = 4096
             buf = (C.c_int16 * (chunk * 2))()
             left = frames

@@ -1,14 +1,14 @@
-"""Biblioteksindex för Subsonic-API:et.
+"""Library index for the web UI and the Subsonic API.
 
-Modell:
-  artist = kompositör (från album.toml eller filernas taggar), delad på , & /
-  genre  = konsol: plattformsmappen, med namn från [platforms] i config.toml
-  album  = en mapp med spel/låtar, ELLER en enskild fil med flera delspår (NSF, SID)
-  låt    = ett delspår, med längd enligt looppolicyn
+Model:
+  artist = composer (from album.toml or the files' tags), split on , & /
+  genre  = console: the platform folder, named via [platforms] in config.toml
+  album  = a folder of tunes, OR a single file with several subtracks (NSF, SID)
+  song   = one subtrack, with its length from the loop policy
 
-Titlar, ordning, dolda spår och looppolicy kan styras med album.toml i metamappen
-(se meta.py). Id:n är stabila (hash av sökvägen), så att MA:s bibliotek och
-spellistor överlever omindexering.
+Titles, order, hidden tracks and loop policy can be set in album.toml in the meta folder
+(see meta.py). Ids are stable (hash of the path), so clients' libraries and playlists
+survive re-indexing.
 """
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ class Song:
     platform: str
     created: str
     engine: str
-    composer: str = ""       # rå kompositörssträng innan delning
+    composer: str = ""       # raw composer string before splitting
 
     @property
     def artist(self) -> str:
@@ -75,7 +75,7 @@ class Album:
     meta_artist: str = ""
     artists: list = field(default_factory=list)   # [(id, namn)]
     year: int | None = None
-    cover: str | None = None          # absolut sökväg till bild
+    cover: str | None = None          # absolute path to an image
     songs: list[str] = field(default_factory=list)
     region: str = ""
     chips: list = field(default_factory=list)
@@ -98,8 +98,8 @@ class Artist:
     albums: list[str] = field(default_factory=list)
 
 
-UNKNOWN = "Okänd kompositör"
-SEVERAL = "Flera kompositörer"
+UNKNOWN = "Unknown composer"
+SEVERAL = "Various composers"
 
 
 def split_names(s: str) -> list[str]:
@@ -145,7 +145,7 @@ class Library:
         self.count = 0
         self._lock = threading.Lock()
 
-    # --- gemensam upplösning (används av index, /info och /render) --------------
+    # --- shared resolution (used by the index, /info and /render) ---------------
     def album_key(self, f: Path, n_tracks: int) -> str:
         rel = str(f.relative_to(self.root))
         if n_tracks > 1:
@@ -153,12 +153,12 @@ class Library:
         return "dir:" + str(f.parent.relative_to(self.root))
 
     def ensure_meta(self, key: str, f: Path, eng, tracks) -> dict | None:
-        """Läser album.toml, och genererar den först om den saknas."""
+        """Reads album.toml, generating it first if it is missing."""
         if not self.meta.enabled:
             return None
         if self.meta.writable and (self.meta.outdated_untouched(key) or (
                 self.meta.titles_newer(key) and self.meta.untouched(key))):
-            log.info("uppdaterar orörd %s (äldre generering eller ny titles.toml)", key)
+            log.info("updating untouched %s (older generation or a newer titles.toml)", key)
             self.meta.delete(key)
         if not self.meta.exists(key) and self.meta.writable:
             if key.startswith("file:"):
@@ -169,7 +169,7 @@ class Library:
                 for g in sorted(f.parent.iterdir(), key=lambda p: p.name.lower()):
                     if g.name.lower() in hidden:
                         continue
-                    if g.is_file() and self.reg.engine_hint(g) not in (None, "saknas"):
+                    if g.is_file() and self.reg.engine_hint(g) not in (None, "missing"):
                         try:
                             _, ts = self.probe(g)
                         except Exception:
@@ -180,10 +180,10 @@ class Library:
         return self.meta.load(key)
 
     def resolve(self, f: Path, sub: int, query: dict | None = None):
-        """-> (motor, TrackInfo med overrides, policyinställningar, metapost, album-meta)."""
+        """-> (engine, TrackInfo with overrides, policy settings, meta entry, album meta)."""
         eng, tracks = self.probe(f)
         if eng is None:
-            raise ValueError("inget stöd för formatet")
+            raise ValueError("format not supported")
         # sub is the engine's track index; engines may skip indices (e.g. silent sequences)
         t = next((x for x in tracks if x.index == sub), None)
         if t is None:
@@ -232,10 +232,10 @@ class Library:
                 if removed:
                     log.info("catalog: removed %d files that no longer exist", removed)
                 self._start_hashing()
-            log.info("index klart: %d artister, %d album, %d låtar på %.1fs",
+            log.info("index ready: %d artists, %d albums, %d songs in %.1fs",
                      len(idx.artists), len(idx.albums), len(idx.songs), time.time() - t0)
         except Exception:
-            log.exception("indexering misslyckades")
+            log.exception("indexing failed")
         finally:
             self.scanning = False
             self._lock.release()
@@ -313,7 +313,7 @@ class Library:
         albums: list[Album] = []
         dirs: dict[Path, list[Path]] = {}
         for f in pdir.rglob("*"):
-            if f.is_file() and self.reg.engine_hint(f) not in (None, "saknas"):
+            if f.is_file() and self.reg.engine_hint(f) not in (None, "missing"):
                 dirs.setdefault(f.parent, []).append(f)
         for d in sorted(dirs, key=lambda p: str(p).lower()):
             dir_album = None
@@ -324,7 +324,7 @@ class Library:
                 try:
                     eng, tracks = self.probe(f)
                 except Exception as e:
-                    log.warning("hoppar över %s: %s", f, e)
+                    log.warning("skipping %s: %s", f, e)
                     continue
                 if not tracks:
                     continue
@@ -348,7 +348,7 @@ class Library:
                 else:
                     if dir_album is None:
                         fallback = tracks[0].game or (
-                            f"{default_platform} (lösa filer)" if d == pdir else d.name)
+                            f"{default_platform} (loose files)" if d == pdir else d.name)
                         dir_album = self._album(idx, key, meta, f, d, default_platform, fallback)
                         albums.append(dir_album)
                     m = re.match(r"^(\d{1,3})\D", f.name)
@@ -364,7 +364,7 @@ class Library:
             idx.genres.setdefault(al.platform, []).append(al.id)
 
     def _assign_artists(self, idx: Index, al: Album):
-        """Albumartist = album.toml artist, annars låtarnas kompositörer."""
+        """Album artist = album.toml artist, otherwise the songs' composers."""
         names = split_names(al.meta_artist)
         if not names:
             seen = []
@@ -418,7 +418,7 @@ class Library:
         frames = int(secs * self.sr)
         rel = str(f.relative_to(self.root))
         track_no = entry.get("track", num)
-        # kompositör: spårets egen post i album.toml, annars filens tagg
+        # composer: the track's own album.toml entry, otherwise the file's tag
         composer = str(entry.get("artist") or t.author or "")
         song = Song(
             id=_id("tr-", f"{rel}#{sub}"), rel=rel, sub=sub,

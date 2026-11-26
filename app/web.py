@@ -441,9 +441,9 @@ class WebUI:
         files = self.meta.all_files(under)
         groups = self.meta.classify(files)
         summary = {"files": len(files),
-                   "untouched": len(groups["orörda"]),
-                   "edited": groups["redigerade"],
-                   "legacy": len(groups["utan_kontrollsumma"])}
+                   "untouched": len(groups["untouched"]),
+                   "edited": groups["edited"],
+                   "legacy": len(groups["legacy"])}
         if not execute:
             return summary, 200
         dest = self.meta.backup_and_remove(files)

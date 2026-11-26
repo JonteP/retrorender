@@ -1,9 +1,9 @@
-"""libvgm via verktyget vgm2wav: VGM/VGZ/S98/DRO med nästan alla ljudchip.
+"""libvgm via the vgm2wav tool: VGM/VGZ/S98/DRO with almost every sound chip.
 
-vgm2wav anropas som subprocess. Argumenten är en mall i config.toml
-([engines] vgm2wav_args) så att de kan justeras utan ombyggnad. Platshållare:
-{in} indatafil, {loops} antal loopar, {rate} samplingsfrekvens.
-Utdatan (WAV på stdout) normaliseras med ffmpeg till stereo s16le.
+vgm2wav runs as a subprocess. Its arguments are a template in config.toml
+([engines] vgm2wav_args) so they can be adjusted without a rebuild. Placeholders:
+{in} input file, {loops} number of loops, {rate} sample rate.
+The output (WAV on stdout) is normalised with ffmpeg to stereo s16le.
 """
 from __future__ import annotations
 
@@ -34,17 +34,17 @@ class LibvgmEngine(Engine):
         return bool(self.cli and self.ffmpeg)
 
     def selftest(self) -> str:
-        """Första raderna av vgm2wav:s hjälptext, så att flaggorna kan kontrolleras via /health."""
+        """First lines of vgm2wav's help text, so the flags can be checked via /health."""
         try:
             r = subprocess.run([self.cli, "--help"], capture_output=True, text=True, timeout=5)
             txt = (r.stdout + r.stderr).strip().splitlines()
             return "\n".join(txt[:25])
         except Exception as e:
-            return f"kunde inte köra vgm2wav: {e}"
+            return f"could not run vgm2wav: {e}"
 
     def probe(self, path: Path) -> list[TrackInfo]:
         if path.suffix.lower() not in (".vgm", ".vgz"):
-            # S98/DRO: ingen egen headerparser ännu, längden lämnas okänd
+            # S98/DRO: no header parser of our own yet, length left unknown
             return [TrackInfo(index=0, title=path.stem, sample_rate=self.sample_rate)]
         h = vgmfile.parse(path)
         t = h.tags
@@ -81,7 +81,7 @@ class LibvgmEngine(Engine):
                 left -= len(b)
             if got == 0:
                 err = p1.stderr.read().decode("utf-8", "replace").strip()
-                raise EngineError(f"vgm2wav gav inget ljud: {err[:300]}")
+                raise EngineError(f"vgm2wav produced no audio: {err[:300]}")
         finally:
             for p in (p2, p1):
                 if p.poll() is None:

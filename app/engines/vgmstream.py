@@ -1,7 +1,7 @@
-"""vgmstream-cli som subprocess: hundratals strömmade spelformat (ADX, HCA, BRSTM, AFC ...).
+"""vgmstream-cli as a subprocess: hundreds of streamed game formats (ADX, HCA, BRSTM, AFC ...).
 
-vgmstream skriver WAV i spårets egen frekvens och kanalantal. Vi skickar det genom
-ffmpeg för att alltid få 2 kanaler s16le i tjänstens samplingsfrekvens.
+vgmstream writes WAV at the track's own rate and channel count. We pass it through
+ffmpeg to always get 2-channel s16le at the service's sample rate.
 """
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ class VgmstreamEngine(Engine):
         return out
 
     def render(self, path: Path, track: TrackInfo, frames: int) -> Iterator[bytes]:
-        # Många loopar, ingen fade: ramverket kapar och tonar ut själv.
+        # Many loops, no fade: the framework cuts and fades out itself.
         cmd = [self.cli, "-p", "-l", "100", "-f", "0"]
         if track.index > 0:
             cmd += ["-s", str(track.index + 1)]
