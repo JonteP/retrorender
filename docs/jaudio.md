@@ -88,3 +88,8 @@ Source: zeldaret/tww `libs/JSystem/src/JAudio` (JASystem::TSeqParser, TTrack, BN
     condition in low nibble, bit 7 = register/table target), C9/CA loop, DF interrupt,
     FD tempo, FE timebase, FF finish.
 - Bend: semitones = pitch parameter × 4 × bend sense (register 7, default 12).
+- FX: `JaiInit.aaf` record type 7 holds FX scenes (JAInter::Fx): scene count, four buffer
+  sizes, scene offsets; each scene is four `FxlineConfig_` (on, two destinations with
+  levels, buffer size in subframes, 8 filter taps). Scene 0 is set at start-up: lines 0/1
+  are 80 ms (return 0x2000, tap 0x3FFF), lines 2/3 140 ms (return 0x4000, tap 0x5800).
+  Scene 1 routes lines 2/3 into other buses. The game picks the scene by location.

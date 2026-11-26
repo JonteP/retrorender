@@ -6,8 +6,9 @@ Galaxy decompilations:
 - envelopes count 600 units per second (48000 / 32000 * 400 subframes),
 - volume = (velocity/127)^2 * instrument * key region * track volume^2 * envelope,
 - sine pan law, pitch = 2^((key - base key)/12 + bend) * instrument pitch,
-- the FX send goes through Galaxy's FX line (AudEffector::mFxLine): a 64-subframe
-  circular buffer with an 8-tap filter whose output is fed back and returned at 0x7000.
+- the FX send goes through the game's FX lines: circular buffers with an 8-tap filter
+  whose output is fed back and returned to the mix (Galaxy: AudEffector::mFxLine; Wind
+  Waker: FX scene 0 in JaiInit.aaf).
 How the DSP microcode feeds the FX buffer back is not in the decompilation; the feedback
 loop here is our best reading of it.
 """
@@ -25,9 +26,10 @@ from .seq1 import Sequence1
 GAME_RATE = 32000.0
 SUBFRAMES_PER_S = 400.0               # 80 samples at 32 kHz
 ENV_UNITS_PER_S = 600.0               # 48000 / 32000 per subframe
-FX_SECONDS = 64 * 80 / GAME_RATE      # 160 ms
-FX_TAPS = np.array([0, 0x1000, 0, 0, 0, 0, 0x3FFF, 0], np.float32) / 32768.0
-FX_RETURN = 0x7000 / 32768.0
+# FX line pairs (left/right): (buffer length in subframes, 8 filter taps, return level).
+# Galaxy: AudEffector::mFxLine in the Petari decompilation. Wind Waker reads its own from
+# JaiInit.aaf (see banks1.BankSet1.fx).
+GALAXY_FX = [(64, (0, 0x1000, 0, 0, 0, 0, 0x3FFF, 0), 0x7000)]
 MASTER = {2: 0.35, 1: 0.7}            # fixed gain per JAudio version (WW mixes ~6 dB lower)
 
 CURVES = [
@@ -194,21 +196,22 @@ class Voice:
 class FxLine:
     """Streaming version of the FX line: y[n] = sum_k h[k] * d[n - D + k], d = x + y."""
 
-    def __init__(self, delay):
+    def __init__(self, delay, taps=GALAXY_FX[0][1]):
         self.D = delay
-        self.hist = np.zeros(delay + len(FX_TAPS), np.float32)   # last D+8 samples of d
+        self.taps = np.array(taps, np.float32) / 32768.0
+        self.hist = np.zeros(delay + len(self.taps), np.float32)   # last D+8 samples of d
 
     def process(self, x):
         n = len(x)
         out = np.empty(n, np.float32)
         a = 0
         while a < n:
-            b = min(n, a + self.D - len(FX_TAPS))
+            b = min(n, a + self.D - len(self.taps))
             m = b - a
             acc = np.zeros(m, np.float32)
-            T = len(FX_TAPS)
+            T = len(self.taps)
             # hist[i] holds d[n - (D + T) + i]; d[n + j - D + k] is hist[j + k + T]
-            for k, h in enumerate(FX_TAPS):
+            for k, h in enumerate(self.taps):
                 if h:
                     acc += h * self.hist[T + k: T + k + m]
             out[a:b] = acc
@@ -263,7 +266,10 @@ def stream(data: bytes, bankset, rate: int, seconds: float, fx_send=0.35,
     mute = sync_tracks(events)
     sub = max(1, round(rate / SUBFRAMES_PER_S))
     env_inc = ENV_UNITS_PER_S * sub / rate
-    fxl, fxr = FxLine(round(FX_SECONDS * rate)), FxLine(round(FX_SECONDS * rate))
+    fx_pairs = []
+    for size, taps, ret in getattr(bankset, "fx", None) or GALAXY_FX:
+        delay = round(size * 80 / GAME_RATE * rate)
+        fx_pairs.append((FxLine(delay, taps), FxLine(delay, taps), ret / 32768.0))
     total = int(seconds * rate)
     state, prog, slots, voices = {}, {}, {}, []
     ei, pos = 0, 0
@@ -335,8 +341,9 @@ def stream(data: bytes, bankset, rate: int, seconds: float, fx_send=0.35,
             voices = alive
         L, R = buf[0], buf[1]
         if fx_send:
-            L = L + FX_RETURN * fxl.process(buf[2])
-            R = R + FX_RETURN * fxr.process(buf[3])
+            for fxl, fxr, ret in fx_pairs:
+                L = L + ret * fxl.process(buf[2])
+                R = R + ret * fxr.process(buf[3])
         out = np.stack([L, R], 1) * MASTER[version]
         out = np.where(np.abs(out) > 0.9, np.sign(out) * (0.9 + 0.1 * np.tanh((np.abs(out) - 0.9) / 0.1)), out)
         n = min(len(out), total - pos)
