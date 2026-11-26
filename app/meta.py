@@ -132,7 +132,9 @@ def parse_sidecars(d: Path) -> tuple[dict, dict, dict]:
                 if all(e["sub"] != entry["sub"] for e in lst):
                     lst.append(entry)
                 continue
-            name = Path(line.split("#")[0].strip()).name
+            name = Path(line.replace("\\", "/")).name
+            if not (d / name).exists():         # 'file.ext #cmd' -> 'file.ext' ('x.ast#C1,2.txtp' is a real name)
+                name = Path(line.split("#")[0].strip().replace("\\", "/")).name
             num += 1
             entry = files.setdefault(name, {})
             for k in ("title", "artist", "track"):
@@ -383,7 +385,6 @@ class MetaStore:
                  or next((t.game for _, t, _ in items if t.game), "") or album_dir.name)
         user_map = load_user_titles(self.titles_path(album_key))
         builtin_map, builtin_src = self.titlemaps.lookup(guess, platform)
-        tmap = {**builtin_map, **user_map}               # your entries override built-in ones
         tmap_src = " + ".join(x for x in ((builtin_src, "titles.toml" if user_map else "")) if x)
         bases: dict[str, int] = {}
         for f, t, n in items:
@@ -401,8 +402,9 @@ class MetaStore:
                     nice += f" ({describe_options(opts)})"
                 if t.title and ("#" in t.title or t.title.lower().endswith((".txtp", ".ast"))):
                     t = replace(t, title="")
-            if n == 1 and base in tmap:                       # title map (user or built-in)
-                title, src, track_no = tmap[base], "title map", num
+            # your titles.toml first, then the rip's own playlist (!tags.m3u), then a built-in map
+            if n == 1 and (base in user_map or (base in builtin_map and not side.get("title"))):
+                title, src, track_no = user_map.get(base) or builtin_map[base], "title map", num
                 if opts and bases.get(base, 0) > 1:
                     title += f" ({describe_options(opts)})"
             elif n > 1 and nzp and nzp.get("title"):           # NEZplug-spellista

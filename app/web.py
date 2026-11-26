@@ -13,6 +13,7 @@ Routes (all require HTTP Basic auth with the [web] or [subsonic] credentials):
   POST /api/album/<id>/toml       save album.toml (body = TOML text, validated)
   POST /api/album/<id>/regenerate regenerate one album.toml (edited file is backed up)
   POST /api/album/<id>/titles     save the album's titles.toml (file name -> track title)
+  GET  /api/album/<id>/tags.m3u   the album's titles as a vgmstream !tags.m3u (download)
   POST /api/regenerate-all?path=  forced regeneration (everything backed up first)
   POST /api/rescan                re-index now
 """
@@ -102,6 +103,8 @@ class WebUI:
                 return h._json(self.album(al)) or True
             if action == "toml" and post:
                 return h._json(*self.save_toml(al, h)) or True
+            if action == "tags.m3u" and not post:
+                return self._tags_m3u(h, al)
             if action == "titles" and post:
                 return h._json(*self.save_titles(al, h)) or True
             if action == "regenerate" and post:
@@ -218,6 +221,51 @@ class WebUI:
         h.send_header("Content-Type", "image/png" if p.suffix.lower() == ".png" else "image/jpeg")
         h.send_header("Content-Length", str(len(data)))
         h.send_header("Cache-Control", "max-age=3600")
+        h.end_headers()
+        h.wfile.write(data)
+        return True
+
+    def tags_m3u(self, al) -> tuple[str, str | None]:
+        """(text, error). One line per file, so albums made of subtunes in one file don't fit."""
+        ix = self.lib.index
+        songs = [ix.songs[sid] for sid in al.songs if sid in ix.songs]
+        if not songs:
+            return "", "the album has no tracks"
+        if any(s.sub for s in songs) or len({s.rel for s in songs}) != len(songs):
+            return "", "this album is subtunes in one file; !tags.m3u lists one file per track"
+        folder = Path(songs[0].rel).parent
+        if any(Path(s.rel).parent != folder for s in songs):
+            return "", "the tracks are spread over several folders"
+        from library import UNKNOWN
+        artist = ", ".join(n for _, n in al.artists if n != UNKNOWN) or al.meta_artist
+        m = re.search(r"Title map: built-in title map (\S+\.toml)",
+                      self.album(al).get("toml", ""))
+        L = [f"# @album {al.name}"]
+        if artist:
+            L.append(f"# @artist {artist}")
+        if al.year:
+            L.append(f"# @year {al.year}")
+        L += ["#", "# Exported by retrorender (https://github.com/JonteP/retrorender)."]
+        if m:
+            L.append("# Track titles from Luma's Workshop (lumasworkshop.com)." if "mario-galaxy" in m.group(1)
+                     else f"# Track titles from the built-in map {m.group(1)}.")
+        L.append("")
+        for i, so in enumerate(sorted(songs, key=lambda x: (x.track or 9999, x.rel)), 1):
+            L.append(f"# %title {so.title}")
+            if so.artist and so.artist != artist:
+                L.append(f"# %artist {so.artist}")
+            L.append(Path(so.rel).name)
+        return "\n".join(L) + "\n", None
+
+    def _tags_m3u(self, h, al) -> bool:
+        text, err = self.tags_m3u(al)
+        if err:
+            return h._json({"error": err}, 422) or True
+        data = text.encode("utf-8")
+        h.send_response(200)
+        h.send_header("Content-Type", "audio/x-mpegurl; charset=utf-8")
+        h.send_header("Content-Disposition", 'attachment; filename="!tags.m3u"')
+        h.send_header("Content-Length", str(len(data)))
         h.end_headers()
         h.wfile.write(data)
         return True

@@ -43,7 +43,13 @@ En titelkarta översätter filnamn till låttitlar. Två sorter:
   webbgränssnittet). Dina rader vinner över den inbyggda kartan; tomma värden ignoreras.
   Filen är din och skrivs aldrig över.
 
-Prioritet för titlar: egen titles.toml > inbyggd karta > taggar > sidofiler > filnamn.
+Prioritet för titlar: egen titles.toml > ripens egen `!tags.m3u` > inbyggd karta > taggar >
+övriga sidofiler > filnamn.
+
+**Ge tillbaka titlarna (v0.9.2).** Knappen "Export !tags.m3u" på albumsidan laddar ner albumets
+nuvarande titlar i vgmstreams `!tags.m3u`-format (en fil per spår; album med delspår i en fil
+stöds inte). joshw.info har inget öppet repo; filen kan skickas i joshw-tråden på hcs64.com
+forum. Kommer arkivet senare med en egen `!tags.m3u` går den före den inbyggda kartan.
 Orörda album.toml genereras om automatiskt (generation 4) och när titles.toml ändras.
 Om album.toml är handredigerad behålls den; använd Regenerate för att få in titlarna.
 
