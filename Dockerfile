@@ -1,7 +1,7 @@
-# retrorender – renderingstjänst för retro- och chiptunemusik
+# retrorender – rendering service for retro and chiptune music
 #
-# Steg 1 bygger vgmstream-cli och steg 2 libvgm (vgm2wav) från källkod.
-# Steg 3 är den körbara imagen: Python + libgme + libopenmpt + sidplayfp + ffmpeg.
+# Stage 1 builds vgmstream-cli and stage 2 libvgm (vgm2wav) from source.
+# Stage 3 is the runtime image: Python + libgme + libopenmpt + sidplayfp + ffmpeg + numpy.
 
 FROM debian:bookworm-slim AS vgmstream
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libmpg123-dev libvorbis-dev libspeex-dev libopus-dev \
         libavformat-dev libavcodec-dev libavutil-dev libswresample-dev \
     && rm -rf /var/lib/apt/lists/*
-# Byt till en release-tagg (t.ex. --branch r2023) för reproducerbara byggen.
+# Switch to a release tag (e.g. --branch r2023) for reproducible builds.
 RUN git clone --depth 1 https://github.com/vgmstream/vgmstream /src \
     && cmake -S /src -B /build -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_AUDACIOUS=OFF -DBUILD_V123=OFF \
@@ -20,8 +20,8 @@ FROM debian:bookworm-slim AS libvgm
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git ca-certificates cmake make g++ pkg-config zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
-# Bygget får misslyckas utan att hela imagen fallerar: då saknas libvgm i /health
-# och VGM-filer med andra chip än Segas ger ett tydligt felmeddelande.
+# This build may fail without failing the image: libvgm then shows as missing in
+# /health, and VGM files with non-Sega chips give a clear error message.
 RUN mkdir -p /out/bin /out/lib \
     && git clone --depth 1 https://github.com/ValleyBell/libvgm /src \
     && cmake -S /src -B /build -DCMAKE_BUILD_TYPE=Release \
@@ -29,7 +29,7 @@ RUN mkdir -p /out/bin /out/lib \
     && cmake --build /build -j"$(nproc)" \
     && find /build -name vgm2wav -type f -perm -u+x -exec cp {} /out/bin/ \; \
     && find /build -name '*.so*' -exec cp -P {} /out/lib/ \; \
-    || echo '!!! libvgm-bygget misslyckades, fortsätter utan vgm2wav'
+    || echo '!!! libvgm build failed, continuing without vgm2wav'
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -42,7 +42,7 @@ COPY --from=libvgm /out/lib/ /usr/local/lib/
 RUN ldconfig
 COPY app /app
 COPY config.toml /config/config.toml
-# Läsbart för alla oavsett rättigheter/ACL på värdens filer (appen kör som 568)
+# Readable for everyone regardless of permissions/ACLs on the host (the app runs as 568)
 RUN chmod -R a+rX /app /config
 
 # Filled in by GitHub Actions, shown in /health and the web UI
@@ -55,7 +55,7 @@ ENV RETRO_CONFIG=/config/config.toml \
     RETRO_PORT=8090 \
     PYTHONUNBUFFERED=1
 EXPOSE 8090
-# 568 = TrueNAS standardanvändare "apps"
+# 568 = TrueNAS default user "apps"
 USER 568:568
 WORKDIR /app
 HEALTHCHECK --interval=60s --timeout=5s CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"

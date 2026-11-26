@@ -1,19 +1,20 @@
-"""Retrorender: renderar retro- och chiptunefiler i realtid över HTTP.
+"""Retrorender: renders retro and chiptune files in real time over HTTP.
 
-GET / (eller /ui)                       webbgränssnittet (kräver inloggning)
-GET /api/...                            webbgränssnittets API (kräver inloggning)
+GET / (or /ui)                          web UI (login required)
+GET /api/...                            web UI API (login required)
 GET /health
-GET /browse?path=<mapp>                 mappar och spelbara filer
-GET /info?path=<fil>[&policyparametrar] delspår, metadata och planerad speltid
-GET /render?path=<fil>&sub=<n>[&fmt=wav|flac][&loops=&min_s=&max_s=&default_s=&fade_s=]
-GET /m3u?path=<mapp eller fil>          spellista med render-URL:er (för VLC m.m.)
-GET /rescan                             indexera om biblioteket nu
-GET /catalog                            katalogstatus: dubbletter (identiska filer), spelnycklar
-GET /meta/show?path=<mapp eller fil>    visa album.toml (genereras om den saknas)
-GET /meta/regenerate?path=<mapp/fil>    generera om en album.toml (redigerad sparas i .backup)
-GET /meta/regenerate-all[?path=<mapp>]  tvingad omgenerering: visar först en varning,
-                                        utför först med &confirm=ja (allt sparas i .backup)
-GET /rest/...                           Subsonic-API (för Music Assistant)
+GET /browse?path=<folder>               folders and playable files
+GET /info?path=<file>[&policy params]   subtracks, metadata and planned play time
+GET /render?path=<file>&sub=<n>[&fmt=wav|flac|mp3][&loops=&min_s=&max_s=&default_s=&fade_s=]
+GET /art/<album id>                     album cover (no login; for network players)
+GET /m3u?path=<folder or file>          playlist of render URLs (for VLC etc.)
+GET /rescan                             re-index the library now
+GET /catalog                            catalog status: duplicates (identical files), game keys
+GET /meta/show?path=<folder or file>    show album.toml (generated if missing)
+GET /meta/regenerate?path=<folder/file> regenerate one album.toml (an edited one is backed up)
+GET /meta/regenerate-all[?path=<folder>] forced regeneration: first shows a warning,
+                                        runs only with &confirm=yes (everything backed up)
+GET /rest/...                           Subsonic API (Music Assistant, Subsonic apps)
 """
 from __future__ import annotations
 
@@ -42,7 +43,7 @@ from policy import plan, settings_for, shape
 from subsonic import Subsonic
 from web import WebUI
 
-VERSION = "0.12.1"
+VERSION = "0.12.2"
 BUILD = {"commit": os.environ.get("RETRO_BUILD_COMMIT", "local")[:7],
          "date": os.environ.get("RETRO_BUILD_DATE", "")}
 
@@ -121,7 +122,7 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"
     server_version = f"retrorender/{VERSION}"
 
-    # --- hjälpare -------------------------------------------------------
+    # --- helpers --------------------------------------------------------
     def _q(self) -> dict:
         q = {k: v[-1] for k, v in parse_qs(urlparse(self.path).query).items()}
         if self.command == "POST":
@@ -136,7 +137,7 @@ class Handler(BaseHTTPRequestHandler):
     def _resolve(self, rel: str) -> Path:
         p = (LIBRARY / rel.lstrip("/")).resolve()
         if p != LIBRARY and not p.is_relative_to(LIBRARY):
-            raise PermissionError("utanför biblioteket")
+            raise PermissionError("outside the library")
         if not p.exists():
             raise FileNotFoundError(rel)
         return p
@@ -155,7 +156,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         msg = fmt % args
-        if "/rest/" in msg:            # visa inte inloggningsuppgifter i loggen
+        if "/rest/" in msg:            # keep credentials out of the log
             msg = re.sub(r"\?[^ ]*", "", msg, count=1)
         sys.stderr.write("%s %s\n" % (self.address_string(), msg))
 
@@ -188,7 +189,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.m3u(q)
             if route == "/rescan":
                 threading.Thread(target=LIB.scan, daemon=True).start()
-                return self._json({"ok": True, "message": "indexering startad"})
+                return self._json({"ok": True, "message": "re-indexing started"})
             if route == "/catalog":
                 return self._json(LIB.catalog_report())
             if route == "/meta/show":
@@ -197,22 +198,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self.meta_show(q, regenerate=True)
             if route == "/meta/regenerate-all":
                 return self.meta_regenerate_all(q)
-            return self._json({"error": "okänd väg", "routes": __doc__}, 404)
+            return self._json({"error": "unknown route", "routes": __doc__}, 404)
         except FileNotFoundError as e:
-            return self._json({"error": f"finns inte: {e}"}, 404)
+            return self._json({"error": f"not found: {e}"}, 404)
         except PermissionError as e:
             return self._json({"error": str(e)}, 403)
         except (EngineError, ValueError, IndexError) as e:
             return self._json({"error": str(e)}, 422)
         except (BrokenPipeError, ConnectionResetError):
-            pass   # klienten (t.ex. Chromecast) stängde strömmen
+            pass   # the client (e.g. a Chromecast) closed the stream
 
     do_POST = do_GET
 
     def browse(self, q):
         d = self._resolve(q.get("path", ""))
         if not d.is_dir():
-            raise ValueError("inte en mapp")
+            raise ValueError("not a folder")
         dirs, files = [], []
         for e in sorted(d.iterdir(), key=lambda x: x.name.lower()):
             rel = str(e.relative_to(LIBRARY))
@@ -226,7 +227,7 @@ class Handler(BaseHTTPRequestHandler):
         p = self._resolve(q["path"])
         eng, tracks = probe(p)
         if eng is None:
-            raise ValueError("inget stöd för formatet")
+            raise ValueError("format not supported")
         out = []
         for t0 in tracks:
             _, t, s, entry, _ = LIB.resolve(p, t0.index, q)
@@ -294,7 +295,7 @@ class Handler(BaseHTTPRequestHandler):
         if fmt in ("flac", "mp3"):
             ff = shutil.which("ffmpeg")
             if not ff:
-                raise ValueError("ffmpeg saknas, FLAC/MP3 går inte")
+                raise ValueError("ffmpeg is missing, so no FLAC/MP3")
             codec = ["-f", "flac"] if fmt == "flac" else ["-f", "mp3", "-b:a", "320k"]
             proc = subprocess.Popen(
                 [ff, "-v", "error", "-f", "s16le", "-ar", str(SAMPLE_RATE), "-ac", "2",
@@ -338,26 +339,26 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(c)
 
     def meta_show(self, q, regenerate: bool):
-        """Visa (och ev. generera om) album.toml för en mapp eller fil."""
+        """Show (and optionally regenerate) album.toml for a folder or file."""
         p = self._resolve(q.get("path", ""))
         if p.is_dir():
             files = sorted(f for f in p.iterdir() if f.is_file() and REG.engine_hint(f)
-                           not in (None, "saknas"))
+                           not in (None, "missing"))
             if not files:
-                raise ValueError("inga spelbara filer i mappen")
+                raise ValueError("no playable files in the folder")
             singles = [f for f in files if len(probe(f)[1]) == 1]
             if not singles:
-                raise ValueError("mappen har bara filer med delspår; ange en fil i stället")
+                raise ValueError("the folder only has files with subtracks; give a file instead")
             f = singles[0]
         else:
             f = p
         eng, tracks = probe(f)
         key = LIB.album_key(f, len(tracks))
         if not META.enabled:
-            raise ValueError("ingen metamapp konfigurerad")
+            raise ValueError("no meta folder configured")
         if regenerate:
             if not META.writable:
-                raise PermissionError("metamappen är inte skrivbar")
+                raise PermissionError("the meta folder is not writable")
             META.delete(key)
         LIB.ensure_meta(key, f, eng, tracks)
         mp = META.path_for(key)
@@ -372,36 +373,36 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def meta_regenerate_all(self, q):
-        """Tvingad omgenerering. Utan confirm=ja: bara en varning med vad som påverkas."""
+        """Forced regeneration. Without confirm=yes: only a warning listing what is affected."""
         if not META.writable:
-            raise PermissionError("metamappen är inte skrivbar")
+            raise PermissionError("the meta folder is not writable")
         under = q.get("path", "").strip("/")
         files = META.all_files(under)
         groups = META.classify(files)
-        if q.get("confirm", "").lower() != "ja":
-            scope = f"under '{under}'" if under else "i hela biblioteket"
+        if q.get("confirm", "").lower() not in ("yes", "ja"):
+            scope = f"under '{under}'" if under else "in the whole library"
             url = (f"{self._base()}/meta/regenerate-all?"
-                   + (f"path={quote(under)}&" if under else "") + "confirm=ja")
+                   + (f"path={quote(under)}&" if under else "") + "confirm=yes")
             return self._json({
-                "varning": (f"Detta tar bort ALLA {len(files)} album.toml {scope} och genererar "
-                            f"nya. {len(groups['redigerade'])} filer har ändrats för hand och "
-                            f"{len(groups['utan_kontrollsumma'])} saknar kontrollsumma (äldre "
-                            "version, kan vara ändrade). Dina ändringar försvinner ur biblioteket, "
-                            "men alla filer flyttas först till en backupmapp i /meta/.backup/."),
-                "påverkas": {k: len(v) for k, v in groups.items()},
-                "redigerade": groups["redigerade"],
-                "utan_kontrollsumma": groups["utan_kontrollsumma"][:50],
-                "bekräfta": url,
+                "warning": (f"This removes ALL {len(files)} album.toml {scope} and generates "
+                            f"new ones. {len(groups['edited'])} files were edited by hand and "
+                            f"{len(groups['legacy'])} have no checksum (older version, may be "
+                            "edited). Your edits leave the library, but every file is first "
+                            "moved to a backup folder in /meta/.backup/."),
+                "affected": {k: len(v) for k, v in groups.items()},
+                "edited": groups["edited"],
+                "legacy": groups["legacy"][:50],
+                "confirm": url,
             })
         dest = META.backup_and_remove(files)
         threading.Thread(target=LIB.scan, daemon=True).start()
-        return self._json({"ok": True, "flyttade": len(files), "backup": str(dest),
-                           "message": "indexering startad; nya album.toml genereras"})
+        return self._json({"ok": True, "moved": len(files), "backup": str(dest),
+                           "message": "re-indexing started; new album.toml files are generated"})
 
     def m3u(self, q):
         p = self._resolve(q.get("path", ""))
         files = sorted((f for f in (p.rglob("*") if p.is_dir() else [p])
-                        if f.is_file() and REG.engine_hint(f) not in (None, "saknas")),
+                        if f.is_file() and REG.engine_hint(f) not in (None, "missing")),
                        key=lambda f: str(f).lower())
         lines = ["#EXTM3U"]
         for f in files:
@@ -427,8 +428,8 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     port = int(os.environ.get("RETRO_PORT", CFG.get("port", 8090)))
-    print(f"retrorender: {LIBRARY} på :{port}; motorer: "
-          f"{[e.name for e in REG.engines]}, saknas: {REG.missing}", flush=True)
+    print(f"retrorender: {LIBRARY} on :{port}; engines: "
+          f"{[e.name for e in REG.engines]}, missing: {REG.missing}", flush=True)
     if CFG.get("subsonic", {}).get("enabled", True):
         LIB.start(float(CFG.get("subsonic", {}).get("rescan_minutes", 60)))
     if JOSHW.enabled:

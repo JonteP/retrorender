@@ -1,7 +1,8 @@
-"""Minimal OpenSubsonic-server (JSON) ovanpå biblioteksindexet.
+"""Minimal OpenSubsonic server (JSON) on top of the library index.
 
-Målet är Music Assistants OpenSubsonic-källa. Okända metoder svarar "ok" med tomt
-innehåll och loggas, eftersom MA avbryter om en metod svarar "unsupported".
+Written for Music Assistant's OpenSubsonic provider; works with other Subsonic apps.
+Unknown methods answer "ok" with empty content and are logged, because MA gives up
+when a method answers "unsupported".
 """
 from __future__ import annotations
 
@@ -42,13 +43,13 @@ class Subsonic:
 
     # --- inramning ------------------------------------------------------------
     def handle(self, handler, method: str, q: dict):
-        """Anropas från HTTP-servern. Returnerar None om svaret redan skickats (stream)."""
+        """Called from the HTTP server. Returns None if the response was already sent (stream)."""
         method = method.removesuffix(".view")
         try:
             self._auth(q)
             fn = getattr(self, "m_" + method, None)
             if fn is None:
-                log.info("okänd Subsonic-metod %s, svarar tomt", method)
+                log.info("unknown Subsonic method %s, answering empty", method)
                 return self._send(handler, {})
             out = fn(q, handler)
             if out is None:
@@ -75,7 +76,7 @@ class Subsonic:
 
     def _auth(self, q):
         if q.get("u") != self.user:
-            raise SubsonicError(40, "fel användarnamn eller lösenord")
+            raise SubsonicError(40, "wrong username or password")
         if "t" in q and "s" in q:
             ok = hashlib.md5((self.password + q["s"]).encode()).hexdigest() == q["t"].lower()
         elif "p" in q:
@@ -84,9 +85,9 @@ class Subsonic:
                 p = bytes.fromhex(p[4:]).decode("utf-8", "replace")
             ok = p == self.password
         else:
-            raise SubsonicError(10, "inloggningsuppgifter saknas")
+            raise SubsonicError(10, "credentials missing")
         if not ok:
-            raise SubsonicError(40, "fel användarnamn eller lösenord")
+            raise SubsonicError(40, "wrong username or password")
 
     # --- omvandling till Subsonic-objekt ------------------------------------
     @property
@@ -146,7 +147,7 @@ class Subsonic:
     def _get(self, table: str, q) -> object:
         obj = getattr(self.ix, table).get(q.get("id", ""))
         if obj is None:
-            raise SubsonicError(70, "hittades inte")
+            raise SubsonicError(70, "not found")
         return obj
 
     @staticmethod
@@ -183,7 +184,7 @@ class Subsonic:
         threading.Thread(target=self.lib.scan, daemon=True).start()
         return {"scanStatus": {"scanning": True, "count": 0}}
 
-    # --- bläddring --------------------------------------------------------------
+    # --- browsing ---------------------------------------------------------------
     def m_getMusicFolders(self, q, h):
         return {"musicFolders": {"musicFolder": [{"id": 1, "name": "Retro"}]}}
 
@@ -220,7 +221,7 @@ class Subsonic:
             a = self._album(self.ix.albums[i], with_songs=True)
             return {"directory": {"id": a["id"], "name": a["name"], "parent": a["parent"],
                                   "child": a.pop("song")}}
-        raise SubsonicError(70, "hittades inte")
+        raise SubsonicError(70, "not found")
 
     def m_getAlbumList2(self, q, h):
         size = min(self._int(q, "size", 10), 500)
@@ -276,7 +277,7 @@ class Subsonic:
 
     m_search2 = m_search3
 
-    # --- tomma svar för det vi inte har ----------------------------------------
+    # --- empty answers for what we do not have ---------------------------------
     def m_getArtistInfo2(self, q, h):
         return {"artistInfo2": {"biography": "", "musicBrainzId": "", "similarArtist": []}}
 
@@ -306,7 +307,7 @@ class Subsonic:
         return {"playlists": {"playlist": []}}
 
     def m_getPlaylist(self, q, h):
-        raise SubsonicError(70, "spellistan finns inte")
+        raise SubsonicError(70, "no such playlist")
 
     def m_getPodcasts(self, q, h):
         return {"podcasts": {"channel": []}}
@@ -356,7 +357,7 @@ class Subsonic:
                         self.on_star(self.ix.songs[sid].rel)
         return {}
 
-    # scrobble, unstar, setRating, savePlayQueue m.fl. hamnar i "okänd metod" = ok
+    # scrobble, unstar, setRating, savePlayQueue etc. end up as "unknown method" = ok
 
     # --- media --------------------------------------------------------------------
     def m_stream(self, q, h):
@@ -365,9 +366,9 @@ class Subsonic:
             h.render({"path": s.rel, "sub": str(s.sub)})
         except (BrokenPipeError, ConnectionResetError):
             pass
-        except Exception as e:          # t.ex. motorfel innan något skickats
+        except Exception as e:          # e.g. an engine error before anything was sent
             log.warning("stream %s misslyckades: %s", s.rel, e)
-            raise SubsonicError(0, f"kunde inte rendera: {e}")
+            raise SubsonicError(0, f"could not render: {e}")
         return None
 
     m_download = m_stream
@@ -379,7 +380,7 @@ class Subsonic:
             song = self.ix.songs.get(i)
             al = self.ix.albums.get(song.album_id) if song else None
         if al is None or not al.cover:
-            raise SubsonicError(70, "ingen bild")
+            raise SubsonicError(70, "no image")
         p = Path(al.cover)
         data = p.read_bytes()
         h.send_response(200)

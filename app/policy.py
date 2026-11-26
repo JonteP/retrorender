@@ -1,13 +1,13 @@
-"""Loop- och speltidspolicy.
+"""Loop and play-time policy.
 
-Inställningar slås ihop i ordningen (sist vinner):
-  [defaults] -> [engine.<motor>] -> [ext.<ändelse>] -> album.toml (album, spår) -> query
+Settings are merged in this order (last wins):
+  [defaults] -> [engine.<engine>] -> [ext.<extension>] -> album.toml (album, track) -> query
 
-loops    antal gånger loopdelen spelas (intro + loops * loop)
-min_s    minsta speltid för loopande spår (fler loopar om det behövs)
-max_s    högsta speltid för alla spår
-default_s speltid när motorn inte vet något om längden
-fade_s   fade-out i slutet när spåret kapas
+loops    how many times the loop part plays (intro + loops * loop)
+min_s    minimum play time for looping tracks (more loops if needed)
+max_s    maximum play time for any track
+default_s play time when the engine knows nothing about the length
+fade_s   fade-out at the end when a track is cut
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ BUILTIN = {"loops": 2, "min_s": 30, "max_s": 600, "default_s": 180, "fade_s": 8}
 
 
 def settings_for(cfg: dict, engine: str, ext: str, query: dict, layers=()) -> dict:
-    """layers = extra lager mellan filändelse och query, t.ex. [album, spår] från album.toml."""
+    """layers = extra layers between extension and query, e.g. [album, track] from album.toml."""
     s = dict(BUILTIN)
     for layer in (cfg.get("defaults", {}),
                   cfg.get("engine", {}).get(engine, {}),
@@ -49,23 +49,23 @@ def plan(track: TrackInfo, s: dict) -> Plan:
         t = intro + max(1.0, s["loops"]) * track.loop_s
         reason = f"intro {intro:.1f}s + {s['loops']:g} x loop {track.loop_s:.1f}s"
         if t < mn:
-            t, reason = mn, reason + f", förlängt till min {mn:g}s"
+            t, reason = mn, reason + f", extended to min {mn:g}s"
         if t > mx:
-            t, reason = mx, reason + f", kapat till max {mx:g}s"
+            t, reason = mx, reason + f", cut to max {mx:g}s"
         return Plan(t, min(s["fade_s"], t / 2), reason)
     if track.length_s and track.length_s > 0:
         if track.length_s > mx:
-            return Plan(mx, min(s["fade_s"], mx / 2), f"fast längd kapad till max {mx:g}s")
+            return Plan(mx, min(s["fade_s"], mx / 2), f"fixed length cut to max {mx:g}s")
         if (track.extra or {}).get("fade_at_end"):
             return Plan(track.length_s, min(s["fade_s"], track.length_s / 2),
-                        "fast längd med fade på slutet")
-        return Plan(track.length_s, 0.0, "fast längd")
+                        "fixed length with a fade at the end")
+        return Plan(track.length_s, 0.0, "fixed length")
     t = min(max(s["default_s"], 0), mx) if mx > 0 else s["default_s"]
-    return Plan(t, min(s["fade_s"], t / 2), "okänd längd, standardtid")
+    return Plan(t, min(s["fade_s"], t / 2), "unknown length, default time")
 
 
 def shape(chunks: Iterator[bytes], frames: int, fade_frames: int) -> Iterator[bytes]:
-    """Exakt `frames` stereo-ramar s16le ut: kapar, fyller ut med tystnad, tonar ut."""
+    """Exactly `frames` s16le stereo frames out: cuts, pads with silence, fades out."""
     total = frames * 4
     fade_start = (frames - fade_frames) * 4
     pos = 0

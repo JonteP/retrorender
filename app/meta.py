@@ -1,12 +1,13 @@
-"""Metadatalager: album.toml-filer i en egen, skrivbar mapp (/meta).
+"""Metadata layer: album.toml files in a separate, writable folder (/meta).
 
-Strukturen speglar biblioteket:
-  /meta/<plattform>/<spel>/album.toml          album = hel mapp
-  /meta/<plattform>/<spel>/<fil>.album.toml    album = en fil med delspår (NSF, SID ...)
+The structure mirrors the library:
+  /meta/<platform>/<game>/album.toml          album = a whole folder
+  /meta/<platform>/<game>/<file>.album.toml   album = one file with subtracks (NSF, SID ...)
 
-En fil som saknas genereras automatiskt. Källor i ordning:
-  1. filens egna taggar   2. rippens sidofiler (!tags.m3u, .m3u)   3. filnamnet
-En befintlig fil skrivs ALDRIG över. Ta bort den, eller anropa /meta/regenerate.
+A missing file is generated automatically. Sources in order:
+  1. the file's own tags   2. the rip's sidecar files (!tags.m3u, .m3u)   3. the file name
+An existing file that was edited by hand is NEVER overwritten. Delete it, or call
+/meta/regenerate.
 """
 from __future__ import annotations
 
@@ -24,8 +25,8 @@ log = logging.getLogger("meta")
 
 POLICY_KEYS = ("loops", "min_s", "max_s", "default_s", "fade_s")
 
-# Höjs när genereringen blir bättre. Filer som är ORÖRDA (innehållet matchar
-# kontrollsumman i första raden) och har en lägre version genereras om automatiskt.
+# Raised when generation improves. Files that are UNTOUCHED (content matches the
+# checksum on the first line) and have a lower version are regenerated automatically.
 GEN_VERSION = 4
 _MARK = "# retrorender-gen"
 
@@ -35,7 +36,7 @@ def _sha(text: str) -> str:
 
 
 def gen_status(text: str) -> tuple[int | None, bool]:
-    """-> (genereringsversion eller None, orörd?)."""
+    """-> (generation version or None, untouched?)."""
     first, _, rest = text.partition("\n")
     m = re.match(rf"^{_MARK} (\d+) ([0-9a-f]+)$", first.strip())
     if not m:
@@ -44,7 +45,7 @@ def gen_status(text: str) -> tuple[int | None, bool]:
 TRACK_INFO_KEYS = ("length_s", "intro_s", "loop_s")
 
 
-# --- TOML-skrivning (stdlib kan bara läsa TOML) -----------------------------------
+# --- TOML writing (the stdlib can only read TOML) ---------------------------------
 def _tv(v) -> str:
     if isinstance(v, bool):
         return "true" if v else "false"
@@ -56,7 +57,7 @@ def _tv(v) -> str:
 
 # --- sidofiler i rippen -------------------------------------------------------------
 def _secs(s: str, allow_zero: bool = False) -> float | None:
-    """'2:30', '0:02:30', '150', '1:05.500' -> sekunder."""
+    """'2:30', '0:02:30', '150', '1:05.500' -> seconds."""
     s = (s or "").strip()
     if not s:
         return None
@@ -71,8 +72,8 @@ def _secs(s: str, allow_zero: bool = False) -> float | None:
 
 
 def parse_nezplug_line(line: str):
-    """NEZplug-format: 'spel.nsf::NSF,1,Titel,2:30,,10,' -> (filnamn, post) eller None.
-    Spårnummer med '$' är hexadecimala och 0-baserade, annars 1-baserade."""
+    """NEZplug format: 'game.nsf::NSF,1,Title,2:30,,10,' -> (file name, entry) or None.
+    Track numbers with '$' are hexadecimal and 0-based, otherwise 1-based."""
     m = re.match(r"^(.+?)::(\w+),(.*)$", line)
     if not m:
         return None
@@ -94,9 +95,9 @@ def parse_nezplug_line(line: str):
 
 
 def parse_sidecars(d: Path) -> tuple[dict, dict, dict]:
-    """Läser !tags.m3u (vgmstream-format), .m3u med #EXTINF och NEZplug-m3u.
+    """Reads !tags.m3u (vgmstream format), .m3u with #EXTINF and NEZplug m3u.
     Returnerar (albumtaggar, {filnamn: {title, artist, track}},
-                {filnamn: [delspårsposter i spellistans ordning]})."""
+                {file name: [subtrack entries in playlist order]})."""
     album, files, nez = {}, {}, {}
     cands = sorted(d.glob("!tags.m3u")) + sorted(
         p for p in d.glob("*.m3u*") if p.name.lower() != "!tags.m3u")
@@ -115,7 +116,7 @@ def parse_sidecars(d: Path) -> tuple[dict, dict, dict]:
             if m:
                 album.setdefault(m.group(1).lower(), m.group(2).strip())
                 continue
-            m = re.match(r"^#\s*%(\w+)\s+(.*)$", line)          # taggar för nästa fil
+            m = re.match(r"^#\s*%(\w+)\s+(.*)$", line)          # tags for the next file
             if m:
                 pending[m.group(1).lower()] = m.group(2).strip()
                 continue
@@ -237,20 +238,20 @@ class MetaStore:
         if self.enabled:
             try:
                 meta_root.mkdir(parents=True, exist_ok=True)
-                probe = meta_root / ".skrivtest"
+                probe = meta_root / ".write-test"
                 probe.write_text("ok")
                 probe.unlink()
             except OSError as e:
-                log.warning("metamappen %s är inte skrivbar (%s): genererar inga filer", meta_root, e)
+                log.warning("meta folder %s is not writable (%s): no files will be generated", meta_root, e)
                 self.writable = False
             else:
                 self.writable = True
         else:
             self.writable = False
 
-    # --- sökvägar ---------------------------------------------------------------
+    # --- paths ------------------------------------------------------------------
     def path_for(self, album_key: str) -> Path | None:
-        """album_key: 'dir:<rel mapp>' eller 'file:<rel fil>'."""
+        """album_key: 'dir:<rel folder>' or 'file:<rel file>'."""
         if not self.enabled:
             return None
         kind, rel = album_key.split(":", 1)
@@ -283,7 +284,7 @@ class MetaStore:
         try:
             data = tomllib.loads(p.read_text("utf-8"))
         except (tomllib.TOMLDecodeError, OSError) as e:
-            log.warning("kunde inte läsa %s: %s (filen används inte, men skrivs inte över)", p, e)
+            log.warning("could not read %s: %s (not used, but not overwritten either)", p, e)
             data = {}
         self._cache[str(p)] = (mt, data)
         return data
@@ -303,7 +304,7 @@ class MetaStore:
         return ver is not None and ok
 
     def outdated_untouched(self, album_key: str) -> bool:
-        """Sann om filen är genererad av en äldre version och inte har ändrats för hand."""
+        """True if the file was generated by an older version and not edited by hand."""
         p = self.path_for(album_key)
         if not (p and p.is_file()):
             return False
@@ -324,7 +325,7 @@ class MetaStore:
                       if ".backup" not in p.relative_to(self.root).parts)
 
     def classify(self, files: list[Path]) -> dict[str, list[str]]:
-        out = {"orörda": [], "redigerade": [], "utan_kontrollsumma": []}
+        out = {"untouched": [], "edited": [], "legacy": []}
         for p in files:
             try:
                 ver, untouched = gen_status(p.read_text("utf-8"))
@@ -332,15 +333,15 @@ class MetaStore:
                 continue
             rel = str(p.relative_to(self.root))
             if ver is None:
-                out["utan_kontrollsumma"].append(rel)
+                out["legacy"].append(rel)
             elif untouched:
-                out["orörda"].append(rel)
+                out["untouched"].append(rel)
             else:
-                out["redigerade"].append(rel)
+                out["edited"].append(rel)
         return out
 
     def prune_backups(self, keep_days: float):
-        """Tar bort backupmappar äldre än keep_days (körs vid varje indexering)."""
+        """Removes backup folders older than keep_days (runs on every index)."""
         bdir = self.root / ".backup" if self.enabled else None
         if not (bdir and bdir.is_dir() and self.writable and keep_days > 0):
             return
@@ -352,7 +353,7 @@ class MetaStore:
                 log.info("tog bort gammal backup %s", d.name)
 
     def backup_and_remove(self, files: list[Path]) -> Path:
-        """Flyttar filerna till /meta/.backup/<tidpunkt>/ med bevarad struktur."""
+        """Moves the files to /meta/.backup/<timestamp>/, keeping their structure."""
         dest = self.root / ".backup" / datetime.now().strftime("%Y%m%d-%H%M%S")
         for p in files:
             target = dest / p.relative_to(self.root)
@@ -366,23 +367,23 @@ class MetaStore:
         if p and p.is_file():
             ver, untouched = gen_status(p.read_text("utf-8"))
             if untouched:
-                p.unlink()                       # orörd: inget att spara
+                p.unlink()                       # untouched: nothing to keep
                 self._cache.pop(str(p), None)
             else:
-                self.backup_and_remove([p])      # redigerad/okänd: spara en kopia
+                self.backup_and_remove([p])      # edited/unknown: keep a copy
             return True
         return False
 
-    # --- generering ---------------------------------------------------------------
+    # --- generation ---------------------------------------------------------------
     def generate(self, album_key: str, album_dir: Path, items: list, platform: str = "") -> str:
-        """items: lista av (Path, TrackInfo, n_subtracks). Skriver bara om filen saknas.
+        """items: list of (Path, TrackInfo, n_subtracks). Only writes if the file is missing.
         Title priority: user titles.toml > built-in title map > tags > sidecars > file name."""
         side_album, side_files, side_nez = parse_sidecars(album_dir)
         nez_file = None
         if album_key.startswith("file:"):
             nez_file = side_nez.get(Path(album_key[5:]).name)
             if nez_file:
-                # spellistan bestämmer vilka delspår som finns och i vilken ordning
+                # the playlist decides which subtracks exist and in what order
                 order = {e["sub"]: i for i, e in enumerate(nez_file)}
                 items = sorted((it for it in items if it[1].index in order),
                                key=lambda it: order[it[1].index])
@@ -418,7 +419,7 @@ class MetaStore:
             elif n > 1 and nzp and nzp.get("title"):           # NEZplug-spellista
                 title, src = nzp["title"], "sidecar"
                 track_no = (nez_file.index(nzp) + 1)
-            elif n > 1:                                       # delspår i en fil
+            elif n > 1:                                       # subtracks in one file
                 title, src = t.title, "tags"
                 if not title or re.fullmatch(r".* \(\d+\)", title or ""):
                     title, src = f"{nice} {t.index + 1}" if n > 1 else nice, "filename"
@@ -446,7 +447,7 @@ class MetaStore:
                         entry[k] = round(nzp[k], 3)
             artist = t.author or side.get("artist")
             if side_album.get("composer") and not side.get("artist"):
-                artist = None      # playlistens @COMPOSER gäller hela albumet
+                artist = None      # the playlist's @COMPOSER applies to the whole album
             if artist:
                 entry["artist"] = artist
                 authors.append(artist)
@@ -465,8 +466,8 @@ class MetaStore:
         title = (side_album.get("album") or side_album.get("title")
                  or (max(set(games), key=games.count) if games else None)
                  or (album_dir.name if album_key.startswith("dir:") else Path(album_key[5:]).stem))
-        # Kompositör: playlistens @COMPOSER, sedan filernas taggar, sist playlistens @ARTIST
-        # (som i NEZplug-rippar ofta är utgivaren, t.ex. "Konami").
+        # Composer: the playlist's @COMPOSER, then the files' tags, last the playlist's @ARTIST
+        # (which in NEZplug rips is often the publisher, e.g. "Konami").
         artist = (side_album.get("composer")
                   or (authors[0] if authors and len(set(authors)) == 1 else "")
                   or side_album.get("artist") or "")
@@ -505,10 +506,10 @@ class MetaStore:
             tmp = p.with_suffix(".tmp")
             tmp.write_text(text, "utf-8")
             tmp.replace(p)
-            log.info("genererade %s", p)
+            log.info("generated %s", p)
         return text
 
-    # --- tillämpning ----------------------------------------------------------------
+    # --- applying -------------------------------------------------------------------
     @staticmethod
     def track_entry(meta: dict | None, filename: str, sub: int, n_sub: int) -> dict:
         if not meta:
@@ -523,7 +524,7 @@ class MetaStore:
 
     @staticmethod
     def apply(track, album_meta: dict, entry: dict):
-        """Returnerar (TrackInfo med overrides, policylager [album, spår])."""
+        """Returns (TrackInfo with overrides, policy layers [album, track])."""
         changes = {}
         if entry.get("title"):
             changes["title"] = str(entry["title"])
@@ -535,7 +536,7 @@ class MetaStore:
             fade = float(entry.get("fade_s", 0) or 0)
             extra = dict(track.extra or {})
             if fade > 0:
-                # NEZplug-semantik: spela length_s, tona sedan ut under fade_s
+                # NEZplug semantics: play length_s, then fade out over fade_s
                 length += fade
                 extra["fade_at_end"] = True
             changes.update(length_s=length, intro_s=None, loop_s=None, extra=extra)

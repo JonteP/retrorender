@@ -1,257 +1,244 @@
-# retrorender v0.8.1
+# retrorender
 
-Renderar retro- och chiptunefiler i realtid över HTTP. Detta är fas 1 i designdokumentet "Retrobibliotek".
+Ett eget bibliotek för retro- och chiptunemusik. Filerna spelas i originalformat och renderas
+i realtid: loopar, speltid och fade styrs av en looppolicy. Musiken spelas i webbläsaren, på
+Chromecast/DLNA-apparater i nätet (TV, nätverkshögtalare) eller via Subsonic-appar.
 
-| Motor | Format | Status |
-| --- | --- | --- |
-| libgme | NSF/NSFE, GBS, SPC, HES, KSS, AY, SAP, GYM; VGM/VGZ med bara Sega-chip | testad |
-| libvgm (vgm2wav) | VGM/VGZ med övriga chip: YM2151, OPN/OPL, OKI, NES, Game Boy m.fl.; S98, DRO | otestad (kräver bygget) |
-| libopenmpt | MOD, XM, IT, S3M, MPTM och ca 30 till | testad |
-| vgmstream | ADX, HCA, BRSTM/BCSTM, AFC, AST, DSP, WEM m.fl. | otestad (kräver bygget) |
-| sidplayfp | SID | otestad, kontrollera CLI-flaggorna |
+## Innehåll
+
+- [Format och motorer](#format-och-motorer)
+- [Installera på TrueNAS SCALE](#installera-på-truenas-scale)
+- [Uppdateringar](#uppdateringar)
+- [Webbgränssnittet](#webbgränssnittet)
+- [Spela på TV och högtalare](#spela-på-tv-och-högtalare)
+- [Biblioteket](#biblioteket)
+- [Metadata: album.toml och titelkartor](#metadata-albumtoml-och-titelkartor)
+- [Looppolicy](#looppolicy)
+- [joshw.info](#joshwinfo)
+- [Subsonic och Music Assistant](#subsonic-och-music-assistant)
+- [HTTP-API](#http-api)
+- [Utveckling](#utveckling)
+- [Kända begränsningar](#kända-begränsningar)
+
+## Format och motorer
+
+| Motor | Format |
+| --- | --- |
+| libgme | NSF/NSFE, GBS, SPC, HES, KSS, AY, SAP, GYM; VGM/VGZ med bara Sega-chip |
+| libvgm (vgm2wav) | VGM/VGZ med övriga chip (YM2151, OPN/OPL, OKI, NES, Game Boy …), S98, DRO |
+| libopenmpt | MOD, XM, IT, S3M, MPTM och ett 30-tal till |
+| vgmstream | ADX, HCA, BRSTM/BCSTM, AFC, AST, DSP, WEM, TXTP och hundratals till |
+| sidplayfp | SID (längder från HVSC:s Songlengths.md5, namn från STIL.txt) |
+| jaudio (egen) | Sekvenserad GameCube/Wii-musik: JAudio2 `.bms` + `.baa` (Super Mario Galaxy, Twilight Princess) och JAudio 1 `JaiSeqs.arc` + `JaiInit.aaf` (The Wind Waker) |
+
+**VGM/VGZ** går till libgme om filen bara använder Segas chip (SN76489, YM2413, YM2612),
+annars till libvgm. `vgm_engine` i config.toml kan tvinga fram en av dem. Saknas vgm2wav ger
+sådana filer ett tydligt fel, och `/health` visar början av `vgm2wav --help` så att
+`vgm2wav_args` kan justeras utan ombyggnad.
+
+**jaudio** är skriven utifrån de dekompilerade spelen; formatnoteringar finns i
+`docs/jaudio.md`. Instrumentbanken (`.baa` eller `JaiInit.aaf`) hittas i samma mapp,
+föräldramappen eller en syskonmapp. Loopar läses exakt ur sekvensen. Ekot är spelets eget
+(Galaxy: AudEffector, Wind Waker: FX-scen 0 i `JaiInit.aaf`); mängden sätts av spelet per
+bana, så här styrs den av `jaudio_fx_send` (0 = torrt). Sekvenser som bara hör till en
+orkesterinspelning (Galaxys `*_midi_cnv` med taktmarkörer) och sekvenser utan toner döljs.
+Första genomsökningen av ett stort arkiv (Wind Waker: 93 sekvenser) tar ungefär en minut.
 
 ## Installera på TrueNAS SCALE
 
-1. Kopiera mappen till ett dataset, t.ex. `/mnt/tank/apps/retrorender`.
-2. Ändra sökvägarna i `compose.yaml` (biblioteket och config.toml).
-3. Bygg imagen i TrueNAS-skalet (System -> Shell):
-   ```
-   cd /mnt/tank/apps/retrorender && sudo docker build -t retrorender:0.5 .
-   ```
-4. Apps -> Discover Apps -> Custom App -> Install via YAML. Klistra in `compose.yaml`.
-5. Kontrollera: `http://<nas-ip>:8090/health` visar vilka motorer som laddades.
+Imagen byggs av GitHub Actions vid varje ändring på `main`: `ghcr.io/jontep/retrorender:latest`.
 
-Containern läser biblioteket skrivskyddat och kör som användaren `apps` (568).
+1. Skapa ett dataset för metadata, t.ex. `/mnt/tank/apps/retrorender/meta`, och lägg din
+   `config.toml` bredvid (utgå från `config.toml` i repot). Båda ska ägas av `apps` (568).
+2. Apps → Discover Apps → Custom App → Install via YAML. Utgå från `compose.yaml` och ändra
+   sökvägarna.
+3. Kontrollera `http://<nas-ip>:8090/health`: laddade motorer, index och metamapp.
 
-## Vilken version körs?
+Om `compose.yaml`:
+- Biblioteket monteras **skrivskyddat** på `/library`. `/library/_synced` (joshw-nedladdningar)
+  och `/meta` är skrivbara.
+- `network_mode: host` behövs för att Chromecast/DLNA-apparater ska hittas automatiskt.
+  Tjänsten nås då på alla NAS:ens gränssnitt, även Tailscale, så använd ett riktigt lösenord.
+  Utan host-nätverk: `ports: ["8090:8090"]` och lista apparaterna under `[outputs]`.
+- `/meta` är det enda stället med manuellt arbete (album.toml, titles.toml): ta med det i
+  snapshots/backup.
 
-`/health` och webbgränssnittet (uppe till höger, och under Overview → Build) visar versionsnumret plus den commit imagen byggdes från. Den ska stämma med senaste commit på `main` på GitHub (de sju första tecknen). Visar den ett äldre värde är imagen inte uppdaterad. Vänta tills Actions-bygget är klart och starta om appen igen.
+## Uppdateringar
 
-## Spela på TV och högtalare (nytt i v0.12)
+Vid varje merge till `main` bygger GitHub Actions en ny image (efter att testerna har gått
+igenom). Med `pull_policy: always` hämtas den när appen startas om.
 
-Webbgränssnittet kan spela direkt på Chromecast- och DLNA-apparater i nätet (TV, nätverks-
-högtalare) — utan Home Assistant eller Music Assistant. Välj apparat i listan nere till höger
-("This browser" = i webbläsaren); play på en låt köar resten av albumet. Föregående/nästa,
-paus, stopp och volym styr apparaten. Apparaten hämtar ljudet själv från `/render` (FLAC om
-den klarar det, annars WAV/MP3) och får titel, album och omslag.
+Versionen syns i webbgränssnittet (uppe till höger, och Overview → Build) och i `/health`:
+versionsnummer plus commit. Commit ska stämma med senaste commit på `main` (sju första
+tecknen). Visar den ett äldre värde är bygget inte klart än.
 
-- Apparaterna hittas automatiskt om containern kör med `network_mode: host` (se
-  `compose.yaml`; ta då bort `ports:`). Annars: lista dem under `[outputs]` i config.toml.
-- Med host-nätverk nås retrorender på alla NAS:ens gränssnitt (även Tailscale) — sätt ett
-  riktigt lösenord i `[subsonic]`/`[web]`.
-- `/render` och omslag via `/art/<album>` kräver ingen inloggning (apparaterna kan inte logga in).
+Automatisk uppdatering kan ordnas med ett Cron Job i TrueNAS (System → Advanced → Cron Jobs),
+t.ex. varje natt 04:00, som drar ny image och startar om appen:
 
-## Wind Waker och JAudio 1 (nytt i v0.11)
-
-Motorn klarar nu även den äldre JAudio-versionen (The Wind Waker). Där ligger sekvenserna
-packade i `Seqs/JaiSeqs.arc` och instrumentbankerna i `JaiInit.aaf` (samplingar i
-`Banks/*.aw`). Arkivet blir ett album med en låt per sekvens, t.ex.
-"Legend of Zelda, The - The Wind Waker (sequenced)". Sekvenser utan toner (ljudeffekter)
-döljs. Första genomsökningen av arkivet tar runt en minut; resultatet sparas i katalogen.
-Ekot är spelets eget (FX-scen 0 ur `JaiInit.aaf`); mängden styrs som för Galaxy av
-`jaudio_fx_send`.
-
-## Sekvenserad Nintendo-musik, BMS (nytt i v0.10)
-
-Egen motor (`jaudio`) för JAudio2-musik från GameCube/Wii, t.ex. Super Mario Galaxy:
-sekvenserna (`.bms`) spelas med spelets egna instrument (`.baa` + `.aw`), byggd från de
-dekompilerade spelen (Twilight Princess, Galaxy). Formatnoteringar finns i `docs/jaudio.md`.
-
-- `.baa` hittas automatiskt i samma mapp, föräldramappen eller en syskonmapp (t.ex. `Waves`).
-- Sekvenser som bara hör till en orkesterinspelning (Galaxys `*_midi_cnv` med taktmarkörer
-  och lager som spelas ovanpå `.ast`-filen) döljs. Kvar blir de låtar som bara finns som BMS:
-  powerup-teman, banvalsmusik, jinglar m.m.
-- Undermappar i en joshw-nedladdning får albumnamnet från arkivet, t.ex.
-  "Super Mario Galaxy (sequenced)".
-- `jaudio_fx_send` under `[engines]` styr mängden eko (spelet sätter den per bana); 0 = torrt.
-- Loopar hittas exakt i sekvensen (intro + loop), så looppolicyn fungerar som för andra format.
-
-Ej ännu: vibrato/tremolo, IIR/FIR-filter.
-
-## TXTP och titelkartor (nytt i v0.9)
-
-**TXTP.** Rippar från GameCube/Wii har ofta `.txtp`-filer som säger åt vgmstream hur ett spår
-ska spelas (t.ex. `SMG_galaxy03_multi.ast#C1,2.txtp` = kanal 1–2 ur en flerlagersfil). När en
-mapp har TXTP-filer är det de som blir spår; filerna de pekar på döljs, så låtar inte dyker upp
-dubbelt. Flera TXTP mot samma fil får ett tillägg i titeln, t.ex. "Beach Bowl Galaxy (channels 1,2)".
-
-**Titelkartor.** Interna filnamn (`SMG_galaxy14_strm`) säger inget, och taggar saknas.
-En titelkarta översätter filnamn till låttitlar. Två sorter:
-
-- *Inbyggda* i `app/titlemaps/*.toml`, matchade på albumtitel och konsol. Super Mario Galaxy
-  (Wii) finns med (från Luma's Workshop). Fler kan läggas till via PR.
-- *Egna*, i albumets meta-mapp som `titles.toml` (fältet "Title map" på albumsidan i
-  webbgränssnittet). Dina rader vinner över den inbyggda kartan; tomma värden ignoreras.
-  Filen är din och skrivs aldrig över.
-
-Prioritet för titlar: egen titles.toml > ripens egen `!tags.m3u` > inbyggd karta > taggar >
-övriga sidofiler > filnamn.
-
-**Ge tillbaka titlarna (v0.9.2).** Knappen "Export !tags.m3u" på albumsidan laddar ner albumets
-nuvarande titlar i vgmstreams `!tags.m3u`-format (en fil per spår; album med delspår i en fil
-stöds inte). joshw.info har inget öppet repo; filen kan skickas i joshw-tråden på hcs64.com
-forum. Kommer arkivet senare med en egen `!tags.m3u` går den före den inbyggda kartan.
-Orörda album.toml genereras om automatiskt (generation 4) och när titles.toml ändras.
-Om album.toml är handredigerad behålls den; använd Regenerate för att få in titlarna.
-
-BMS-filer (sekvenserad JAudio-musik), `.bns`, `.thp`, `.aw` och `.baa` hanteras inte ännu.
-
-## joshw.info (nytt i v0.8)
-
-Vyn **joshw** i webbgränssnittet listar spelen för de konsoler som står i `[joshw] systems` i config.toml (`wii`, `gcn`, `nsf`, …). Titel, år, utvecklare och utgivare läses ur arkivnamnen. Inget laddas ned förrän du väljer:
-
-- **Listen:** hämtar och packar upp spelet som *tillfälligt*. Tillfälliga spel över `temp_limit_gb` rensas automatiskt, det minst nyligen spelade först.
-- **Add / Keep:** spelet behålls permanent i biblioteket. En favorit (hjärta) i Music Assistant gör samma sak.
-- **Remove:** tar bort de nedladdade filerna. Spelet finns kvar i listan och kan hämtas igen.
-
-Filerna hamnar i `/library/_synced/joshw/<system>/<arkivnamn>/`, med en `.source.json` som ger rätt titel och år i album.toml. Konsolnamnen (genre) kommer från en inbyggd lista, som kan ändras under `[joshw.platforms]`. Spel som redan finns i ditt eget bibliotek med samma titel och konsol markeras "already have it". Identiska filer döljs som vanligt, och den lokala kopian vinner.
-
-Hänsyn mot joshw.info, som drivs av frivilliga: en nedladdning i taget, `delay_s` sekunders paus mellan anropen, och listorna läses om högst en gång per `refresh_hours`.
-
-Krav:
-- `/library/_synced` monterad **skrivbar**, efter den skrivskyddade `/library` i compose. Mappen ska ägas av 568:568.
-- `[joshw] enabled = true` i config.toml.
-
-## Webbgränssnitt (nytt i v0.7)
-
-Öppna `http://<nas-ip>:8090/`. Inloggningen använder `user` och `password` från `[subsonic]`, eller från ett eget avsnitt `[web]` om du vill ha separata uppgifter:
-
-```toml
-[web]
-user = "admin"
-password = "något-annat"
+```
+midclt call app.pull_images retrorender '{"redeploy": true}'
 ```
 
-- **Overview:** version, motorer, index- och katalogstatus, knappen "Re-index now" och "Regenerate all metadata…" (med förhandsvisning och bekräftelse).
-- **Library:** bläddra per konsol och kompositör, och sök i album, kompositörer, konsoler och spår.
-- **Album:** spårlista med provlyssning i webbläsaren, redigering av `album.toml` (valideras innan den sparas, så att en felaktig fil aldrig skrivs) och "Regenerate…".
-- **Catalog:** dolda dubbletter, album med samma spelnyckel och spelnyckeln för alla album.
+Prova kommandot i skalet först; anropets namn kan skilja mellan TrueNAS-versioner.
 
-Det som ändrar något kräver inloggning: allt under `/api/`, samt `/rescan`, `/meta/regenerate` och `/meta/regenerate-all`. `/health`, `/info`, `/render`, `/browse`, `/m3u` och `/meta/show` är fortfarande öppna, så att Home Assistant och Chromecast kan använda render-URL:er utan inloggning.
+## Webbgränssnittet
 
-## Katalog i SQLite (nytt i v0.6)
+`http://<nas-ip>:8090/`. Inloggning med `user`/`password` från `[web]`, eller från
+`[subsonic]` om `[web]` saknas.
 
-`/meta/catalog.sqlite` sparar probe-resultat per fil. Vid omstart läses de från databasen i stället för att varje fil probas igen, så länge storlek och ändringstid är oförändrade. Filer som har försvunnit tas bort ur katalogen vid nästa indexering.
+- **Overview:** version, motorer, index- och katalogstatus, "Re-index now" och
+  "Regenerate all metadata…" (med förhandsvisning och bekräftelse).
+- **Library:** bläddra per konsol och kompositör, sök i album, kompositörer, konsoler och spår.
+- **Album:** spårlista med uppspelning, redigering av `album.toml` (valideras innan den
+  sparas), "Regenerate…", titelkarta och "Export !tags.m3u".
+- **joshw:** se [joshw.info](#joshwinfo).
+- **Catalog:** dolda dubbletter, album med samma spelnyckel och spelnycklar per album.
 
-- **Identiska filer:** SHA-1 räknas i bakgrunden. Filer med exakt samma innehåll visas bara en gång. Den första i alfabetisk ordning behålls.
-- **Spelnyckel** = konsol + normaliserad titel + region + ljudchip. Regionen läses från taggar som `(Japan)` eller `(USA)` i albumnamn och mappnamn. Ljudchip läses från NSF-headern (VRC6, VRC7, FDS, MMC5, N163, S5B) och från VGM-headern.
-- **Versioner samexisterar:** album med samma namn men olika region eller chip får ett tillägg, t.ex. "Castlevania III (JP, VRC6)" och "Castlevania III (US)".
-- **`/catalog`** visar katalogstatus, identiska filer, dolda dubbletter och spelnycklar per album.
-- Mappar på översta nivån som börjar med `_` eller `.` hoppas över. `_synced` är reserverad för kommande synk.
+Spelaren längst ner spelar i webbläsaren eller på en apparat i nätet. Play på en låt köar
+resten av albumet.
 
-## Artister och konsoler (nytt i v0.5)
+## Spela på TV och högtalare
 
-- **Artist** = kompositör. Albumartist hämtas från `artist` i album.toml, annars från låtarnas kompositörer. Saknas uppgift blir det "Okänd kompositör". Flera namn delas vid `,` `&` `/` `och`, så ett album hamnar under varje kompositör.
-- **Genre** = konsol. Det är plattformsmappen, med snygga namn från `[platforms]` i config.toml. Ett album kan avvika med `platform = "..."` i sin album.toml.
-- I MA: Artister → kompositör → alla album. Genrer → konsol → allt för den konsolen.
+Välj apparat i listan nere till höger ("This browser" = webbläsaren, "Search for devices…"
+söker igen). Retrorender pratar direkt med Chromecast (Google Cast) och DLNA/UPnP-apparater,
+utan Home Assistant eller Music Assistant. Apparaten hämtar själv ljudet från `/render`
+(FLAC om den klarar det, annars WAV eller MP3) och får titel, album och omslag. Kön går
+vidare när en låt är slut; föregående/nästa, paus, stopp och volym styr apparaten.
 
-Nya metadatakällor:
-- **NEZplug-m3u** (`spel.nsf::NSF,3,Titel,2:30,,10`) för NSF/GBS/KSS/HES: titel, längd och fade per delspår. Om en sådan spellista finns sätts `only_listed = true`, så att ljudeffekter som inte är musik döljs. Längden räknas som speltid plus fade, alltså samma tolkning som i NEZplug och libgme.
-- **Spellisttaggar** i NEZplug-m3u (`# @COMPOSER`, `# @DATE`, `# @TITLE`) ger kompositör, år och speltitel. `@ARTIST` används bara som reserv, eftersom fältet ofta innehåller utgivaren.
-- **STIL.txt** från HVSC: namn (NAME) och kompositör (AUTHOR) per delspår. Den hittas automatiskt bredvid Songlengths.md5.
+- Apparater söks automatiskt var tionde minut (kräver host-nätverk). Annars, eller för
+  apparater som inte svarar: `cast = [...]` och `dlna = [...]` under `[outputs]`.
+- Vissa TV-apparater (t.ex. LG) frågar om lov första gången. Statusraden visar då
+  "waiting for the device"; kön väntar i upp till tre minuter.
+- `/render` och omslag via `/art/<album>` kräver ingen inloggning, eftersom apparaterna inte
+  kan logga in.
 
-**Tvingad omgenerering:** `/meta/regenerate-all` (hela biblioteket) eller `/meta/regenerate-all?path=Wii` (en konsol) visar först en varning med hur många filer som påverkas och vilka du har redigerat. Inget händer förrän du öppnar bekräftelselänken (`&confirm=ja`). Alla filer flyttas först till `/meta/.backup/<tidpunkt>/`. Även `/meta/regenerate` på ett enskilt album sparar en kopia om filen var redigerad. Gamla backuper rensas automatiskt efter `meta_backup_days` (90 dagar).
+## Biblioteket
 
-Från v0.5.1 har varje genererad album.toml en kontrollsumma på första raden. Filer som inte har ändrats för hand genereras om automatiskt när genereringen förbättras. Filer du har redigerat rörs aldrig. Filer från v0.4 saknar kontrollsumma: ta bort dem som du inte har ändrat, så skapas nya.
+- **Konsol (genre)** = mappen på översta nivån, med snygga namn från `[platforms]`.
+  Ett album kan avvika med `platform = "..."` i sin album.toml.
+- **Album** = en mapp med låtar, eller en fil med flera delspår (NSF, SID, `JaiSeqs.arc`).
+- **Kompositör (artist)** = från album.toml eller filernas taggar, delat vid `,` `&` `/` `och`.
+  Saknas uppgift blir det "Unknown composer".
+- Mappar på översta nivån som börjar med `_` eller `.` hoppas över; `_synced` används för
+  joshw-nedladdningar. Undermappar i en nedladdning (t.ex. `Seqs`) får albumnamnet från
+  arkivet, t.ex. "Super Mario Galaxy (sequenced)".
+- **Katalog** (`/meta/catalog.sqlite`): probe-resultat sparas per fil och återanvänds så länge
+  storlek och ändringstid är oförändrade.
+- **Identiska filer** (SHA-1) visas bara en gång; den första i bokstavsordning (lokala före
+  nedladdade) behålls. För TXTP räknas filnamnet och den refererade filen in.
+- **Spelnyckel** = konsol + normaliserad titel + region + ljudchip (NSF-expansioner, VGM-chip).
+  Versioner samexisterar: "Castlevania III (JP, VRC6)" och "Castlevania III (US)".
+- **TXTP:** finns `.txtp`-filer i en mapp är det de som blir spår, och filerna de pekar på
+  döljs. Flera TXTP mot samma fil får ett tillägg, t.ex. "Beach Bowl Galaxy (channels 1,2)".
 
-## Metadata: album.toml (nytt i v0.4)
+## Metadata: album.toml och titelkartor
 
-Titlar, spårordning, dolda spår och looppolicy styrs av en `album.toml` per album i metamappen (`/meta`). Strukturen speglar biblioteket:
+Varje album har en `album.toml` i metamappen, som speglar biblioteket:
 
 ```
 /meta/Wii/Super Mario Galaxy (USA)/album.toml      album = hel mapp
 /meta/C64/Commando.sid.album.toml                  album = fil med delspår
 ```
 
-Filen skapas automatiskt vid första indexeringen. Källorna används i den här ordningen:
-1. Filens egna taggar (GD3, SID-header, NSFE, vgmstream ...).
-2. Rippens sidofiler: `!tags.m3u` (`# @ALBUM`, `# %TITLE`) och `.m3u` med `#EXTINF`.
-3. Filnamnet, städat: `05 Vampire Killer.vgz` blir spår 5, "Vampire Killer".
+Den skapas automatiskt. Källor i ordning: egen `titles.toml` → ripens `!tags.m3u` →
+inbyggd titelkarta → filens taggar (GD3, SID, NSFE, vgmstream …) → övriga sidofiler
+(`.m3u` med `#EXTINF`, NEZplug-m3u med titel/längd/fade per delspår, `.source.json`) →
+filnamnet (`05 Vampire Killer.vgz` → spår 5, "Vampire Killer"). Finns en NEZplug-spellista
+sätts `only_listed = true`, så att ljudeffekter döljs. Från HVSC används STIL.txt (namn och
+kompositör per delspår).
 
-En befintlig fil skrivs **aldrig över**. Vill du generera om: `/meta/regenerate?path=<mapp>`, eller ta bort filen. Ändringar slår igenom vid nästa indexering, eller direkt via `/rescan`.
+- Första raden har versionsnummer och kontrollsumma. **Orörda** filer genereras om
+  automatiskt när genereringen förbättras eller `titles.toml` ändras. Filer du har redigerat
+  rörs aldrig.
+- "Regenerate…" i webbgränssnittet (eller `/meta/regenerate?path=…`) genererar om ett album;
+  en redigerad fil sparas först i `/meta/.backup/<tidpunkt>/`. "Regenerate all metadata…"
+  (`/meta/regenerate-all`) visar först vad som påverkas och kräver bekräftelse
+  (`&confirm=yes`). Backuper rensas efter `meta_backup_days`.
+- Fält per spår (`[[track]]`): `file`, `sub`, `title`, `track`, `artist`, `skip`, `length_s`,
+  `intro_s` + `loop_s`, `loops`, `min_s`, `max_s`, `fade_s`. För albumet (`[album]`): `title`,
+  `artist`, `year`, `cover`, `platform`, `only_listed` och samma policyfält.
 
-Fält per spår (`[[track]]`): `file`, `sub`, `title`, `track`, `artist`, `skip`, `length_s` (fast längd), `intro_s` + `loop_s` (egen loop), `loops`, `min_s`, `max_s`, `fade_s`.
-Fält för albumet (`[album]`): `title`, `artist`, `year`, `cover`, `only_listed`, samt samma policyfält som gäller hela albumet.
+**Titelkartor** översätter interna filnamn (`SMG_galaxy14_strm`) till titlar.
+Inbyggda ligger i `app/titlemaps/` (Super Mario Galaxy från Luma's Workshop) och matchas på
+albumtitel och konsol. Egna skrivs i fältet "Title map" på albumsidan (sparas som
+`titles.toml` i albumets meta-mapp, skrivs aldrig över) och går före den inbyggda kartan.
 
-Policyordning: config -> motor -> filändelse -> album -> spår -> URL-parametrar.
+**Ge tillbaka:** "Export !tags.m3u" laddar ner albumets titlar i vgmstreams format, t.ex. för
+att skicka till joshw-tråden på hcs64.com-forumet.
 
-Metamappen är det enda stället med manuellt arbete. Lägg den i ett dataset som täcks av snapshots och backup. Containern (användare 568) måste ha skrivrätt dit. `/health` visar `meta.writable`.
+## Looppolicy
 
-## Music Assistant via OpenSubsonic (nytt i v0.3)
+Lagren slås ihop i ordningen `[defaults]` → `[engine.<motor>]` → `[ext.<ändelse>]` →
+album.toml (album, spår) → URL-parametrar; sist vinner.
 
-retrorender talar Subsonic-protokollet under `/rest/`. Music Assistants inbyggda källa "OpenSubsonic" kan därför läsa biblioteket utan att MA ändras.
-
-- **Artist** = plattformsmappen på översta nivån (`X68000`, `MegaDrive`, `C64` ...)
-- **Album** = en spelmapp, eller en fil med flera delspår (NSF, SID)
-- **Låt** = ett delspår, med längd enligt looppolicyn. Strömmas som WAV.
-
-Biblioteket indexeras vid start och sedan var `rescan_minutes`. `/health` visar indexets storlek.
-
-Inställningar i config.toml:
-```toml
-[subsonic]
-enabled = true
-user = "musicassistant"
-password = "byt-mig"
-rescan_minutes = 60
-```
-
-I MA: Inställningar -> Musikkällor -> Lägg till -> OpenSubsonic. Ange NAS:ens adress, port 8090 och användare och lösenord enligt ovan.
-
-Andra Subsonic-appar (t.ex. på mobilen) fungerar om de använder JSON-formatet. XML-svar finns inte ännu.
-
-## Motorval för VGM/VGZ (nytt i v0.2)
-
-Tjänsten läser VGM-headern och ser vilka chip filen använder. Filer med bara SN76489, YM2413 och YM2612 (Sega) går till libgme. Allt annat går till libvgm. Inställningen `vgm_engine` i config.toml kan tvinga fram en av motorerna. `/info` visar chippen under `extra.chips` för filer som spelas med libvgm.
-
-Saknas vgm2wav ger X68000-filer och liknande ett tydligt fel i stället för tystnad, och `/browse` visar `"engine": "saknas"`.
-
-`/health` visar början av `vgm2wav --help` under `diagnostics`. Om flaggorna inte stämmer ändrar du `vgm2wav_args` i config.toml och startar om. Ingen ombyggnad behövs.
-
-## API
-
-| Väg | Gör |
-| --- | --- |
-| `/health` | Status, laddade och saknade motorer |
-| `/browse?path=Sega` | Mappar och spelbara filer |
-| `/info?path=Sega/spel.vgz` | Delspår, metadata, looppunkter och planerad speltid med motivering |
-| `/render?path=...&sub=0` | Ljud. WAV med exakt längd (standard) eller `&fmt=flac` |
-| `/m3u?path=Sega` | Spellista med render-URL:er, öppna i VLC |
-
-Policyn kan åsidosättas per anrop: `&loops=3&min_s=60&max_s=300&default_s=120&fade_s=5`.
-
-## Testa på högtalarna från Home Assistant
-
-Utvecklarverktyg -> Åtgärder:
-
-```yaml
-action: media_player.play_media
-target:
-  entity_id: media_player.argon_forte_a5   # din Chromecast-entitet
-data:
-  media_content_id: "http://192.168.1.10:8090/render?path=Sega/spel.vgz&sub=0"
-  media_content_type: music
-```
-
-## Looppolicy (config.toml)
-
-Ordningen är `[defaults]` -> `[engine.<motor>]` -> `[ext.<ändelse>]` -> query-parametrar, och det sista lagret vinner.
-
-- Spår med känd loop: intro + `loops` x loop, förlängd till `min_s` och kapad vid `max_s`, sedan fade.
-- Spår med fast längd: spelas klart, kapas bara vid `max_s`.
+- Känd loop: intro + `loops` × loop, förlängd till `min_s`, kapad vid `max_s`, sedan fade.
+- Fast längd: spelas klart, kapas bara vid `max_s`.
 - Okänd längd: `default_s` med fade.
 
 `/info` visar för varje spår hur längden räknades fram (`reason`).
 
-## Kända begränsningar i v0.1
+## joshw.info
 
-- Ingen sökning inom ett spår: Range-förfrågningar besvaras med hela filen.
-- Per-spår-overrides (YAML-fil) kommer i fas 2.
-- SID utan Songlengths.md5 spelas `default_s`.
+Vyn **joshw** listar spelen för konsolerna i `[joshw] systems` (`wii`, `gcn`, `nsf` …), med
+titel, år, utvecklare och utgivare ur arkivnamnen. Inget laddas ned förrän du väljer:
 
-## Lokalt test utan Docker
+- **Listen:** hämtas som *tillfälligt*. Tillfälliga spel över `temp_limit_gb` rensas
+  automatiskt, minst nyligen spelade först.
+- **Add / Keep:** behålls permanent. En favorit via Subsonic (`star`) gör samma sak.
+- **Remove:** tar bort filerna; spelet finns kvar i listan.
+
+Filerna hamnar i `/library/_synced/joshw/<system>/<arkivnamn>/` med en `.source.json`.
+Spel som redan finns lokalt markeras "already have it". Hänsyn mot joshw.info: en
+nedladdning i taget, `delay_s` sekunders paus, listorna läses om högst var `refresh_hours`.
+Kräver `[joshw] enabled = true` och skrivbar `/library/_synced` (ägd av 568:568).
+
+## Subsonic och Music Assistant
+
+Under `/rest/` finns ett OpenSubsonic-API (JSON) som Subsonic-appar och Music Assistants
+OpenSubsonic-källa kan använda: artist = kompositör, genre = konsol, album och låtar som
+ovan, strömmat som WAV med exakt längd. Användare och lösenord under `[subsonic]`.
+Biblioteket indexeras vid start och var `rescan_minutes`.
+
+## HTTP-API
+
+| Väg | Gör |
+| --- | --- |
+| `/health` | Status, motorer, index, metamapp |
+| `/browse?path=Sega` | Mappar och spelbara filer |
+| `/info?path=Sega/spel.vgz` | Delspår, metadata, looppunkter, planerad speltid med motivering |
+| `/render?path=…&sub=0` | Ljud: WAV med exakt längd, eller `&fmt=flac` / `&fmt=mp3` |
+| `/art/<album id>` | Albumomslag |
+| `/m3u?path=Sega` | Spellista med render-URL:er (VLC m.fl.) |
+| `/catalog` | Katalogstatus, dubbletter, spelnycklar |
+| `/meta/show?path=…` | Visa album.toml |
+
+Policyn kan åsidosättas per anrop: `&loops=3&min_s=60&max_s=300&default_s=120&fade_s=5`.
+`/api/*` (webbgränssnittets API), `/rescan` och `/meta/regenerate*` kräver inloggning.
+
+## Utveckling
+
+Ändringar görs i grenar och kommer in via pull requests; `main` är skyddad. GitHub Actions
+kör testerna på varje PR och vid push till `main`, och bygger imagen när de går igenom.
+
+```
+python3 tests/test_txtp_titles.py
+python3 tests/test_jaudio.py
+python3 tests/test_outputs.py
+```
+
+Lokalt utan Docker (kräver libgme/libopenmpt för de motorerna):
 
 ```
 python3 tests/make_samples.py /tmp/testlib
-cd app && RETRO_LIBRARY=/tmp/testlib RETRO_CONFIG=../config.toml python3 server.py
+cd app && RETRO_LIBRARY=/tmp/testlib RETRO_META=/tmp/testmeta RETRO_CONFIG=../config.toml python3 server.py
 ```
+
+Kod, kommentarer och genererade filer skrivs på engelska.
+
+## Kända begränsningar
+
+- Ingen spolning inom ett spår: Range-förfrågningar besvaras med hela filen.
+- SID utan Songlengths.md5 spelas `default_s`.
+- jaudio: vibrato/tremolo och IIR/FIR-filter är inte implementerade (används inte av Galaxy).
+- Synkad uppspelning i flera rum samtidigt finns inte.
+- Subsonic-API:t svarar bara JSON, inte XML.

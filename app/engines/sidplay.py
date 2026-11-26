@@ -1,7 +1,7 @@
-"""sidplayfp som subprocess (C64 SID). Skriver WAV till en FIFO som vi läser i realtid.
+"""sidplayfp as a subprocess (C64 SID). Writes WAV to a FIFO that we read in real time.
 
-SID-filer saknar längdinformation. Längden tas från HVSC:s Songlengths.md5 om den
-finns (sökväg i config), annars gäller standardtiden i looppolicyn.
+SID files carry no length. The length comes from HVSC's Songlengths.md5 if available
+(path in config), otherwise the loop policy's default time applies.
 """
 from __future__ import annotations
 
@@ -49,8 +49,8 @@ class Songlengths:
 
 
 class Stil:
-    """HVSC:s STIL.txt: namn och kompositör per delspår.
-    Nyckel = sökväg i HVSC, t.ex. '/MUSICIANS/H/Hubbard_Rob/Commando.sid'."""
+    """HVSC's STIL.txt: name and composer per subtune.
+    Key = path in HVSC, e.g. '/MUSICIANS/H/Hubbard_Rob/Commando.sid'."""
     FIELDS = ("NAME", "AUTHOR", "TITLE", "ARTIST", "COMMENT")
 
     def __init__(self, path: Optional[str]):
@@ -75,9 +75,9 @@ class Stil:
             if m and m.group(1) in self.FIELDS:
                 rec = self.db[cur].setdefault(sub, {})
                 last = m.group(1).lower()
-                rec.setdefault(last, m.group(2).strip())    # första förekomsten vinner
+                rec.setdefault(last, m.group(2).strip())    # first occurrence wins
                 continue
-            if last and raw.startswith(" "):               # fortsättningsrad
+            if last and raw.startswith(" "):               # continuation line
                 rec = self.db[cur].setdefault(sub, {})
                 if rec.get(last) is not None and last == "comment":
                     rec[last] += " " + raw.strip()
@@ -136,8 +136,8 @@ class SidplayEngine(Engine):
         tmp = tempfile.mkdtemp(prefix="sid")
         fifo = os.path.join(tmp, "out.wav")
         os.mkfifo(fifo)
-        # Flaggor enligt sidplayfp(1): -o<n> delspår (1-baserat), -t<m:ss> längd,
-        # -w<fil> skriv WAV, -q tyst. Kontrollera mot den installerade versionen.
+        # Flags per sidplayfp(1): -o<n> subtune (1-based), -t<m:ss> length,
+        # -w<file> write WAV, -q quiet. Check against the installed version.
         cmd = [self.cli, "-q", f"-o{track.index + 1}",
                f"-t{int(secs // 60)}:{int(secs % 60):02d}", f"-w{fifo}", str(path)]
         player = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

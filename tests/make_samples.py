@@ -1,4 +1,4 @@
-"""Skapar två små testfiler: en VGM (SN76489, med intro + loop) och en MOD."""
+"""Creates two small test files: a VGM (SN76489, with intro + loop) and a MOD."""
 import struct
 import sys
 from pathlib import Path
@@ -7,14 +7,14 @@ out = Path(sys.argv[1] if len(sys.argv) > 1 else "testlib")
 (out / "Sega").mkdir(parents=True, exist_ok=True)
 (out / "Amiga").mkdir(parents=True, exist_ok=True)
 
-# --- VGM: 1 s intro, sedan en loop på 2 s ---------------------------------
+# --- VGM: 1 s intro, then a 2 s loop ---------------------------------------
 CLK = 3579545
 
 
 def tone(ch, hz, vol=2):
     n = int(CLK / (32 * hz))
     psg = [0x80 | (ch << 5) | (n & 0xF), (n >> 4) & 0x3F, 0x90 | (ch << 5) | vol]
-    return b"".join(bytes([0x50, x]) for x in psg)   # 0x50 = skriv till PSG
+    return b"".join(bytes([0x50, x]) for x in psg)   # 0x50 = write to the PSG
 
 
 def wait(samples):
@@ -40,7 +40,7 @@ struct.pack_into("<I", hdr, 0x20, 44100 * 2)                 # loopens samples
 struct.pack_into("<I", hdr, 0x34, 0x40 - 0x34)               # dataoffset (relativ)
 (out / "Sega" / "test.vgm").write_bytes(bytes(hdr) + data)
 
-# --- MOD: en kanal, fyrkantsvåg, 4 toner per takt ---------------------------
+# --- MOD: one channel, square wave, 4 notes per bar ---------------------------
 title = b"retrorender test".ljust(20, b"\0")
 smp = bytes([0x40] * 16 + [0xC0] * 16)                       # 32 byte fyrkant
 s1 = b"square".ljust(22, b"\0") + struct.pack(">HBBHH", len(smp) // 2, 0, 48, 0, len(smp) // 2)
@@ -56,7 +56,7 @@ mod = title + s1 + empty * 30 + bytes([1, 0x7F]) + bytes(128) + b"M.K." + pat + 
 print("skrev", out)
 
 # --- VGZ som X68000 (YM2151 + OKIM6258) med GD3-taggar --------------------
-# Inga riktiga chipkommandon: filen testar motorvalet, inte ljudet.
+# No real chip commands: the file tests engine selection, not the sound.
 import gzip
 
 
@@ -75,7 +75,7 @@ struct.pack_into("<I", xhdr, 0x08, 0x171)
 struct.pack_into("<I", xhdr, 0x30, 4000000)           # YM2151
 struct.pack_into("<I", xhdr, 0x90, 4000000)           # OKIM6258
 struct.pack_into("<I", xhdr, 0x18, 44100 * 4)
-struct.pack_into("<I", xhdr, 0x1C, 0x100 + 3 - 0x1C)  # loop efter första wait-kommandot
+struct.pack_into("<I", xhdr, 0x1C, 0x100 + 3 - 0x1C)  # loop after the first wait command
 struct.pack_into("<I", xhdr, 0x20, 44100 * 3)
 struct.pack_into("<I", xhdr, 0x34, 0x100 - 0x34)
 tags = gd3(title="Vampire Killer (test)", game="Akumajo Dracula", system="Sharp X68000",

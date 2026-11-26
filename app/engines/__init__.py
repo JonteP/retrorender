@@ -16,13 +16,13 @@ VGM_EXT = (".vgm", ".vgz")
 
 
 class Registry:
-    """Väljer motor. VGM/VGZ väljs efter vilka chip filen använder, resten efter filändelse."""
+    """Picks the engine. VGM/VGZ by the chips the file uses, everything else by extension."""
 
     def __init__(self, cfg: dict):
         sr = int(cfg.get("sample_rate", 44100))
         eng = cfg.get("engines", {})
-        # "auto": libgme för rena Sega-filer, libvgm för allt annat
-        # "libvgm": libvgm för alla VGM   "gme": libgme för alla VGM
+        # "auto": libgme for Sega-only files, libvgm for everything else
+        # "libvgm": libvgm for all VGM   "gme": libgme for all VGM
         self.vgm_mode = eng.get("vgm_engine", "auto")
         self.gme = GmeEngine(sr)
         self.libvgm = LibvgmEngine(sr, cli=eng.get("vgm2wav_cli", "vgm2wav"),
@@ -69,15 +69,15 @@ class Registry:
             return self.gme
         if lib_ok:
             return self.libvgm
-        raise EngineError(f"kräver libvgm (chip: {', '.join(h.chips)}), men vgm2wav saknas")
+        raise EngineError(f"needs libvgm (chips: {', '.join(h.chips)}), but vgm2wav is missing")
 
     def engine_hint(self, path: Path) -> Optional[str]:
-        """Motorns namn för listningar; kastar aldrig."""
+        """Engine name for listings; never raises."""
         try:
             e = self.for_path(path)
             return e.name if e else None
         except EngineError:
-            return "saknas"
+            return "missing"
 
 
 __all__ = ["Registry", "Engine", "EngineError", "TrackInfo"]
