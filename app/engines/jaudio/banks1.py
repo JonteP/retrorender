@@ -78,13 +78,33 @@ def parse_bank0(d: bytes, base: int):
     return vir, insts
 
 
+def parse_fx_scene(d: bytes, base: int, scene: int = 0):
+    """FX scene from JaiInit.aaf (JAInter::Fx): scene count, 4 buffer sizes, scene offsets;
+    a scene is 4 FxlineConfig_ (0x20 bytes: on, dest/level x2, size in subframes, 8 taps).
+    Returns stereo pairs (size, taps, return level) for lines that go to the main mix.
+    The game switches scenes by location; scene 0 is the one set at start-up."""
+    if scene >= u32(d, base):
+        return None
+    sc = base + u32(d, base + 0x14 + 4 * scene)
+    pairs = []
+    for line in (0, 2):
+        p = sc + 0x20 * line
+        on = d[p]
+        dst0, lv0 = struct.unpack_from(">Hh", d, p + 2)
+        size = struct.unpack_from(">i", d, p + 0xC)[0]
+        taps = struct.unpack_from(">8h", d, p + 0x10)
+        if on and size > 0 and dst0 == 0 and lv0:      # returned to main left (and pair to right)
+            pairs.append((size, taps, lv0))
+    return pairs or None
+
+
 class BankSet1:
     """JaiInit.aaf: bank virtual id (as used by sequences) -> (insts, waves)."""
 
     def __init__(self, aaf: Path, aw_dir: Optional[Path] = None):
         d = aaf.read_bytes()
         aw_dir = aw_dir or aaf.parent / "Banks"
-        o, bnk, ws = 0, [], []
+        o, bnk, ws, fx_off = 0, [], [], None
         while True:
             t = u32(d, o); o += 4
             if t == 0:
@@ -94,9 +114,12 @@ class BankSet1:
                 while u32(d, o):
                     lst.append((u32(d, o), u32(d, o + 4), u32(d, o + 8))); o += 12
                 o += 4
-            elif t == 1 or t >= 4:
-                o += 12 if t != 4 else 12
+            else:
+                if t == 7:
+                    fx_off = u32(d, o)
+                o += 12
         wsys = [parse_wsys(d, off, aw_dir) for off, _, _ in ws]
+        self.fx = parse_fx_scene(d, fx_off) if fx_off else None
         self.banks = {}
         for off, _, wsi in bnk:
             vir, insts = parse_bank0(d, off)

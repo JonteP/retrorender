@@ -42,7 +42,7 @@ from policy import plan, settings_for, shape
 from subsonic import Subsonic
 from web import WebUI
 
-VERSION = "0.11.0"
+VERSION = "0.12.0"
 BUILD = {"commit": os.environ.get("RETRO_BUILD_COMMIT", "local")[:7],
          "date": os.environ.get("RETRO_BUILD_DATE", "")}
 
@@ -182,6 +182,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.info(q)
             if route == "/render":
                 return self.render(q)
+            if route.startswith("/art/"):
+                return self.art(route[5:])
             if route == "/m3u":
                 return self.m3u(q)
             if route == "/rescan":
@@ -237,7 +239,41 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"path": q["path"], "engine": eng.name,
                            "album_key": LIB.album_key(p, len(tracks)), "tracks": out})
 
-    def render(self, q):
+    def _dlna_headers(self):
+        # DLNA renderers (e.g. LG TVs) want these on media responses
+        self.send_header("transferMode.dlna.org", "Streaming")
+        self.send_header("contentFeatures.dlna.org",
+                         "DLNA.ORG_OP=00;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000")
+        self.send_header("Accept-Ranges", "none")
+
+    def do_HEAD(self):
+        route = urlparse(self.path).path.rstrip("/") or "/"
+        try:
+            if route == "/render":
+                return self.render(self._q(), head=True)
+            if route.startswith("/art/"):
+                return self.art(route[5:], head=True)
+        except Exception:               # noqa: BLE001
+            pass
+        self.send_response(404)
+        self.end_headers()
+
+    def art(self, album_id: str, head: bool = False):
+        """Album cover without login, for network players (album ids are not guessable
+        paths and only the album's own cover image is served)."""
+        al = LIB.index.albums.get(album_id)
+        if al is None or not al.cover or not Path(al.cover).is_file():
+            return self._json({"error": "no cover"}, 404)
+        p = Path(al.cover)
+        data = b"" if head else p.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png" if p.suffix.lower() == ".png" else "image/jpeg")
+        self.send_header("Content-Length", str(p.stat().st_size))
+        self.end_headers()
+        if not head:
+            self.wfile.write(data)
+
+    def render(self, q, head: bool = False):
         p = self._resolve(q["path"])
         eng, t, s, _, _ = LIB.resolve(p, int(q.get("sub", 0)), q)
         JOSHW.played(str(p.relative_to(LIBRARY)))
@@ -246,13 +282,23 @@ class Handler(BaseHTTPRequestHandler):
         pcm = shape(eng.render(p, t, frames), frames, int(pl.fade_s * SAMPLE_RATE))
         title = (t.title or p.stem).encode("ascii", "replace").decode()
 
-        if q.get("fmt", "wav") == "flac":
+        fmt = q.get("fmt", "wav")
+        if head:
+            self.send_response(200)
+            self.send_header("Content-Type", {"flac": "audio/flac", "mp3": "audio/mpeg"}.get(fmt, "audio/wav"))
+            if fmt == "wav":
+                self.send_header("Content-Length", str(44 + frames * 4))
+            self._dlna_headers()
+            self.end_headers()
+            return
+        if fmt in ("flac", "mp3"):
             ff = shutil.which("ffmpeg")
             if not ff:
-                raise ValueError("ffmpeg saknas, FLAC går inte")
+                raise ValueError("ffmpeg saknas, FLAC/MP3 går inte")
+            codec = ["-f", "flac"] if fmt == "flac" else ["-f", "mp3", "-b:a", "320k"]
             proc = subprocess.Popen(
                 [ff, "-v", "error", "-f", "s16le", "-ar", str(SAMPLE_RATE), "-ac", "2",
-                 "-i", "pipe:0", "-metadata", f"title={t.title}", "-f", "flac", "pipe:1"],
+                 "-i", "pipe:0", "-metadata", f"title={t.title}", *codec, "pipe:1"],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 
             def feed():
@@ -268,8 +314,9 @@ class Handler(BaseHTTPRequestHandler):
                         pass
             threading.Thread(target=feed, daemon=True).start()
             self.send_response(200)
-            self.send_header("Content-Type", "audio/flac")
+            self.send_header("Content-Type", "audio/flac" if fmt == "flac" else "audio/mpeg")
             self.send_header("X-Title", title)
+            self._dlna_headers()
             self.end_headers()
             try:
                 while b := proc.stdout.read(65536):
@@ -284,6 +331,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "audio/wav")
         self.send_header("Content-Length", str(44 + frames * 4))
         self.send_header("X-Title", title)
+        self._dlna_headers()
         self.end_headers()
         self.wfile.write(wav_header(frames, SAMPLE_RATE))
         for c in pcm:
@@ -389,6 +437,9 @@ def main():
                 JOSHW.refresh_all()               # each system at most once per refresh_hours
                 time.sleep(3600)
         threading.Thread(target=refresh_loop, daemon=True, name="joshw-refresh").start()
+    from outputs import Outputs
+    WEB.outputs = Outputs(CFG, LIB, port)     # Cast/DLNA players in the network
+    WEB.outputs.start()
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
 

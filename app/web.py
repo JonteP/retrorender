@@ -118,9 +118,39 @@ class WebUI:
             return h._json({"ok": True}) or True
         if name == "joshw":
             return self._joshw(h, parts[1:], q, post)
+        if name == "outputs":
+            return self._outputs(h, parts[1:], post)
         if name == "regenerate-all":
             return h._json(*self.regenerate_all(q, execute=post)) or True
         return h._json({"error": "unknown API route"}, 404) or True
+
+    # --- network players ---------------------------------------------------------------
+    outputs = None          # set by server.main (Cast/DLNA)
+
+    def _outputs(self, h, parts, post) -> bool:
+        out = self.outputs
+        if out is None or not out.enabled:
+            return h._json({"enabled": False, "devices": []}) or True
+        try:
+            if not parts or parts == [""]:
+                return h._json({"enabled": True, "devices": out.list(),
+                                "last_discovery": out.last_discovery}) or True
+            if parts[0] == "discover" and post:
+                out.discover()
+                return h._json({"enabled": True, "devices": out.list(),
+                                "last_discovery": out.last_discovery}) or True
+            if len(parts) >= 2 and post:
+                body = json.loads(self._body(h) or "{}")
+                from urllib.parse import unquote
+                dev, action = unquote(parts[0]), parts[1]
+                if action == "play":
+                    return h._json(out.play(dev, body.get("songs", []), int(body.get("start", 0)))) or True
+                return h._json(out.control(dev, action, body.get("value"))) or True
+        except KeyError as e:
+            return h._json({"error": str(e)}, 404) or True
+        except Exception as e:      # noqa: BLE001 - device errors go back to the page
+            return h._json({"error": str(e)}, 502) or True
+        return h._json({"error": "unknown outputs route"}, 404) or True
 
     # --- views ---------------------------------------------------------------------------
     def _page(self, h) -> bool:
