@@ -97,13 +97,16 @@
     border-top: 1px solid var(--line); }
   .player .now { min-width: 0; flex: 0 1 380px; white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; }
-  .player audio { flex: 1; height: 36px; }
+  .player .prog { flex: 1; min-width: 120px; display: flex; gap: 10px; align-items: center;
+    font: 12px var(--mono); color: var(--muted); }
+  .player .pbar { flex: 1; height: 4px; border-radius: 2px; background: var(--panel2); overflow: hidden; }
+  .player #pfill { height: 100%; width: 0; background: var(--accent); }
   .player .ctl { display: flex; gap: 6px; align-items: center; }
   .player .ctl button { padding: 4px 8px; min-width: 38px; font-size: 16px; line-height: 1.3; }
-  .player .remote { flex: 1; display: flex; gap: 12px; align-items: center; color: var(--muted); }
+  .player .remote { flex: none; display: flex; gap: 12px; align-items: center; color: var(--muted); }
   .player select { padding: 7px 10px; color: var(--text); background: var(--panel2);
     border: 1px solid var(--line); border-radius: 8px; font: inherit; max-width: 230px; }
-  .player input[type=range] { width: 110px; }
+  .player input[type=range] { width: 100px; accent-color: var(--accent); }
   .player [hidden] { display: none !important; }
   .toast { position: fixed; right: 24px; bottom: 80px; z-index: 9; padding: 10px 16px;
     border-radius: 8px; background: var(--panel2); border: 1px solid var(--line);
@@ -116,6 +119,11 @@
   .modal .box { width: min(560px, 92vw); background: var(--panel); border: 1px solid var(--line);
     border-radius: var(--radius); padding: 20px; }
   .modal .box ul { max-height: 180px; overflow: auto; }
+  .modal .box.wide { width: min(1000px, 94vw); max-height: 92vh; overflow: auto; }
+  .kv { display: grid; grid-template-columns: 130px 1fr; gap: 4px 12px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; word-break: break-all; }
+  td input.ren { padding: 4px 8px; }
   .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 12px 0; }
   .tabs a { padding: 6px 12px; border-radius: 8px; background: var(--panel2);
     border: 1px solid var(--line); color: var(--muted); }
@@ -211,17 +219,18 @@
   <div class="ctl">
     <button id="pShuffle" title="Shuffle the rest of the queue">🔀</button>
     <button id="pPrev" title="Previous">⏮</button>
-    <button id="pToggle" title="Pause / play (space)">⏯</button>
+    <button id="pToggle" title="Play / pause (space)">▶</button>
     <button id="pNext" title="Next">⏭</button>
     <button id="pRepeat" title="Repeat: off">🔁</button>
     <button id="pQueue" title="Queue">☰<span class="badge" id="qcount"></span></button>
   </div>
-  <audio id="audio" controls preload="none"></audio>
+  <audio id="audio" preload="none"></audio>
+  <div class="prog"><span id="tCur">0:00</span><div class="pbar"><div id="pfill"></div></div><span id="tDur">0:00</span></div>
   <div class="remote" id="remote" hidden>
     <span id="rState"></span>
     <button id="pStop" title="Stop">⏹</button>
-    <input type="range" id="rVol" min="0" max="100" step="1" title="Volume">
   </div>
+  <input type="range" id="vol" min="0" max="100" step="1" title="Volume">
   <select id="target" title="Where to play">
     <option value="browser">This browser</option>
   </select>
@@ -251,9 +260,12 @@ function toast(msg, err = false) {
   const t = $("#toast"); t.textContent = msg; t.className = "toast show" + (err ? " err" : "");
   clearTimeout(t._h); t._h = setTimeout(() => (t.className = "toast"), 3500);
 }
-function modal(html) { $("#modalbox").innerHTML = html; $("#modal").classList.add("show"); }
+function modal(html, wide = false) {
+  $("#modalbox").innerHTML = html; $("#modalbox").classList.toggle("wide", wide); $("#modal").classList.add("show");
+}
 function closeModal() { $("#modal").classList.remove("show"); }
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeModal(); closeMenu(); } });
 
 // --- player: a queue, played in this browser or on a Cast/DLNA device ---------------------
 // A track is the object the API returns (song_brief): id, title, artist, album, album_id,
@@ -276,7 +288,7 @@ function restoreQueue() {
   if (!q || !Array.isArray(q.queue)) return;
   queue = q.queue; qi = Math.min(q.qi || 0, Math.max(0, queue.length - 1));
   repeat = q.repeat || "off"; shuffled = !!q.shuffled;
-  if (queue[qi] && !isRemote()) { $("#audio").src = queue[qi].render; }
+  if (queue[qi] && !isRemote()) { $("#audio").src = queue[qi].render; showProgress(0, queue[qi].duration); }
   setNow(queue[qi]);
 }
 function shuffleArr(a) {
@@ -438,7 +450,29 @@ $("#pToggle").onclick = () => {
 $("#pShuffle").onclick = toggleShuffle;
 $("#pRepeat").onclick = cycleRepeat;
 $("#pStop").onclick = () => remote("stop");
-$("#rVol").onchange = (e) => remote("volume", e.target.value / 100);
+// one volume slider: the browser's own, or the device's
+$("#vol").value = Math.round(store.get("volume", 1) * 100);
+$("#audio").volume = store.get("volume", 1);
+$("#vol").oninput = (e) => { if (!isRemote()) { $("#audio").volume = e.target.value / 100; store.set("volume", e.target.value / 100); } };
+$("#vol").onchange = (e) => { if (isRemote()) remote("volume", e.target.value / 100); };
+
+// progress: from the audio element, or estimated between polls of the device
+let rPos = null;               // {pos, at, playing, dur} from the last poll
+function showProgress(cur, dur) {
+  $("#tCur").textContent = fmt(cur || 0);
+  $("#tDur").textContent = fmt(dur || 0);
+  $("#pfill").style.width = dur ? Math.min(100, (100 * (cur || 0)) / dur) + "%" : "0";
+}
+function showPlaying(on) { $("#pToggle").textContent = on ? "⏸" : "▶"; }
+const audioEl = $("#audio");
+audioEl.addEventListener("timeupdate", () => { if (!isRemote()) showProgress(audioEl.currentTime, queue[qi]?.duration || audioEl.duration); });
+audioEl.addEventListener("play", () => { if (!isRemote()) showPlaying(true); });
+audioEl.addEventListener("pause", () => { if (!isRemote()) showPlaying(false); });
+setInterval(() => {
+  if (!isRemote() || !rPos) return;
+  const cur = rPos.pos + (rPos.playing ? (Date.now() - rPos.at) / 1000 : 0);
+  showProgress(Math.min(cur, rPos.dur || cur), rPos.dur);
+}, 500);
 $("#pQueue").onclick = () => { const p = $("#qpanel"); p.hidden = !p.hidden; if (!p.hidden) renderQueue(); };
 $("#now").onclick = $("#nowcover").onclick = () => { const t = queue[qi]; if (t) location.hash = "#/album/" + t.album_id; };
 document.addEventListener("keydown", (e) => {
@@ -528,10 +562,77 @@ function trackItems(get, one) {
   const items = [["▶ Play now", run((t) => playList(t))], ["Play next", run(playNext)], ["Add to queue", run(enqueue)],
     ["Add to playlist…", run((t) => pickPlaylist(t))]];
   if (one) {
+    items.push("-", ["Rename…", () => renameTrack(one)], ["Info…", () => trackInfo(one)]);
     items.push("-", ["Go to album", () => (location.hash = "#/album/" + one.album_id)]);
     (one.artists || []).slice(0, 3).forEach((a) => items.push([`Go to ${a.name}`, () => (location.hash = "#/library?artist=" + a.id)]));
   }
   return items;
+}
+
+// rename in place: the title cell becomes a text field (Enter saves, Esc cancels)
+function renameTrack(t) {
+  const cell = document.querySelector(`tr[data-id="${t.id}"] .ttl`);
+  const save = async (title) => {
+    title = title.trim();
+    if (!title || title === t.title) return false;
+    try {
+      await post(`song/${t.id}/title`, { title });
+      t.title = title;
+      queue.forEach((x) => { if (x.id === t.id) x.title = title; });
+      saveQueue(); if (playingId === t.id) setNow(t);
+      toast("Renamed");
+      return true;
+    } catch (e) { toast(e.message, true); return false; }
+  };
+  if (!cell) {                     // not in a table on this page (e.g. from the queue)
+    modal(`<h1>Rename track</h1><input type="text" id="renIn" value="${esc(t.title)}">
+      <div class="row" style="justify-content:flex-end;margin-top:16px"><button onclick="closeModal()">Cancel</button>
+        <button class="primary" id="go">Save</button></div>`);
+    const go = async () => { await save($("#renIn").value); closeModal(); if (!$("#qpanel").hidden) renderQueue(); };
+    $("#go").onclick = go; $("#renIn").onkeydown = (e) => { if (e.key === "Enter") go(); };
+    $("#renIn").select();
+    return;
+  }
+  cell.innerHTML = `<input type="text" class="ren" value="${esc(t.title)}">`;
+  const inp = cell.querySelector("input");
+  let done = false;
+  const finish = async (keep) => {
+    if (done) return; done = true;
+    if (keep) await save(inp.value);
+    cell.textContent = t.title;
+  };
+  inp.onkeydown = (e) => { if (e.key === "Enter") finish(true); if (e.key === "Escape") finish(false); };
+  inp.onblur = () => finish(true);
+  inp.ondblclick = (e) => e.stopPropagation();
+  inp.focus(); inp.select();
+}
+
+async function trackInfo(t) {
+  modal(`<h1>${esc(t.title)}</h1><p class="muted">Loading…</p>`, true);
+  let info = null, eng = null;
+  try {
+    [info, eng] = await Promise.all([
+      fetch(`/info?path=${encodeURIComponent(t.file)}`).then((r) => r.json()),
+      api(`song/${t.id}/engine`).catch(() => null)]);
+  } catch (e) { /* show what we have */ }
+  const tr = info && info.tracks ? info.tracks.find((x) => x.index === t.sub) : null;
+  const row = (k, v) => (v === undefined || v === null || v === "" ? "" : `<dt>${k}</dt><dd>${v}</dd>`);
+  const sec = (v) => (v == null ? null : `${fmt(v)} <span class="muted">(${(+v).toFixed(2)} s)</span>`);
+  modal(`<h1>${esc(t.title)}</h1>
+    <p class="muted">${esc(t.album)} · ${esc(t.platform)}</p>
+    <dl class="kv">
+      ${row("File", `<span class="mono">${esc(t.file)}</span>`)}
+      ${row("Subtune", info && info.tracks && info.tracks.length > 1 ? `${t.sub} of ${info.tracks.length}` : null)}
+      ${row("Composer", esc(t.artist))}
+      ${row("Engine", esc(t.engine) + (eng ? ` <span class="muted">· ${esc(eng.insight_text)}</span>` : ""))}
+      ${row("Voices", eng && eng.voices && eng.voices.length ? esc(eng.voices.join(", ")) : null)}
+      ${tr ? row("Play time", `${fmt(tr.planned_s)} <span class="muted">· ${esc(tr.reason)}${tr.fade_s ? `, fade ${tr.fade_s} s` : ""}</span>`) : ""}
+      ${tr ? row("Intro", sec(tr.intro_s)) + row("Loop", sec(tr.loop_s)) + row("Length", sec(tr.length_s)) : ""}
+      ${tr ? row("Settings", `<span class="mono">${esc(Object.entries(tr.settings).map(([k, v]) => `${k}=${v}`).join("  "))}</span>`) : ""}
+      ${row("Track id", `<span class="mono">${esc(t.id)}</span>`)}
+      ${row("Stream", `<a class="link mono" href="${esc(t.render)}" target="_blank">${esc(t.render)}</a>`)}
+    </dl>
+    <div class="row" style="justify-content:flex-end;margin-top:16px"><button onclick="closeModal()">Close</button></div>`, true);
 }
 
 async function pickPlaylist(tracks, fromQueue = false) {
@@ -579,8 +680,8 @@ async function loadDevices(rediscover = false) {
   showTarget();
 }
 function showTarget() {
-  $("#audio").hidden = isRemote();
   $("#remote").hidden = !isRemote();
+  rPos = null; showProgress(0, 0); showPlaying(isRemote() ? false : !audioEl.paused);
   clearInterval(remotePoll);
   if (isRemote()) { pollRemote(); remotePoll = setInterval(pollRemote, 2500); }
 }
@@ -602,9 +703,11 @@ async function pollRemote() {
   if (!isRemote() || document.hidden) return;
   try { devices = (await api("outputs")).devices || devices; } catch (e) { return; }
   const d = devices.find((x) => x.id === target), s = d && d.session;
-  if (!s || !s.song) { $("#rState").textContent = d ? "Idle" : "Device gone"; return; }
+  if (!s || !s.song) { $("#rState").textContent = d ? "Idle" : "Device gone"; rPos = null; showPlaying(false); return; }
+  showPlaying(s.state === "PLAYING" || s.state === "BUFFERING");
+  rPos = { pos: s.position || 0, at: Date.now(), playing: s.state === "PLAYING", dur: s.song.duration };
   const st = { PLAYING: "Playing", PAUSED: "Paused", BUFFERING: "Loading", STOPPED: "Stopped", IDLE: "Waiting" }[s.state] || s.state || "";
-  $("#rState").textContent = `${st} · ${s.index + 1}/${s.count}` + (s.error ? ` · ${s.error}` : "");
+  $("#rState").textContent = (s.error || st) + ` · ${s.index + 1}/${s.count}`;
   // follow the device through our queue when it is the same queue
   if (s.songs && s.songs.length === queue.length && s.songs.every((id, i) => queue[i].id === id) && s.index !== qi) {
     qi = s.index; saveQueue();
@@ -799,8 +902,7 @@ function trackTable(tracks, opts = {}) {
     <tbody>${tracks.map((t, i) => `<tr data-id="${t.id}" data-i="${i}" class="${t.id === playingId ? "playing" : ""}" ${opts.drag ? 'draggable="true"' : ""}>
       <td style="width:40px"><button class="play" data-play="${i}" title="Play">▶</button></td>
       ${opts.album ? "" : `<td class="num">${opts.drag ? i + 1 : t.track}</td>`}
-      <td>${esc(t.title)}${opts.album || (t.artist && t.artist !== opts.albumArtist) ? `<div class="muted">${esc(t.artist)}</div>` : ""}
-        ${opts.files ? `<div class="mono muted">${esc(t.file)}${t.sub ? " #" + t.sub : ""}</div>` : ""}</td>
+      <td><span class="ttl">${esc(t.title)}</span>${opts.album || (t.artist && t.artist !== opts.albumArtist) ? `<div class="muted">${esc(t.artist)}</div>` : ""}</td>
       ${opts.album ? `<td><a class="link" href="#/album/${t.album_id}">${esc(t.album)}</a><div class="muted">${esc(t.platform)}</div></td>`
         : `<td class="muted">${esc(t.engine)}</td>`}
       <td class="len">${fmt(t.duration)}</td>
@@ -818,8 +920,6 @@ function bindTracks(root, tracks) {
 // --- album ----------------------------------------------------------------------------------
 async function viewAlbum(v, id) {
   const a = await api("album/" + encodeURIComponent(id));
-  const stateChip = { untouched: ["ok", "generated, untouched"], edited: ["warn", "edited by hand"],
-    legacy: ["warn", "older version"], missing: ["bad", "missing"] }[a.toml_state];
   const albumArtist = a.artists.map((x) => x.name).join(", ");
   v.innerHTML = `
     <div class="ahead">
@@ -847,37 +947,15 @@ async function viewAlbum(v, id) {
         <p class="mono muted">${esc(a.game_key)}</p>
       </div>
     </div>
-    <div class="two">
-      <section class="card"><h2>Tracks</h2>${trackTable(a.tracks, { files: true, albumArtist })}</section>
-      <section class="card"><h2>album.toml</h2>
-        <div class="row" style="justify-content:space-between;margin-bottom:10px">
-          <span class="chip ${stateChip[0]}">${stateChip[1]}</span>
-          <span class="mono muted" title="${esc(a.toml_path || "")}">${esc((a.toml_path || "").split("/").slice(-2).join("/"))}</span></div>
-        <textarea id="toml" spellcheck="false" wrap="off" ${a.writable ? "" : "readonly"}>${esc(a.toml)}</textarea>
-        <div class="row" style="margin-top:12px">
-          <button class="primary" id="save" ${a.writable ? "" : "disabled"}>Save</button>
-          <button id="revert">Revert</button>
-          <span style="flex:1"></span>
-          <button class="danger" id="regen" ${a.writable ? "" : "disabled"}>Regenerate…</button></div>
-        <p class="muted" style="margin-top:12px">Saving marks the file as edited, so it is never overwritten automatically.</p>
-      </section>
-      <section class="card"><h2>Title map</h2>
-        <p class="muted">${a.titles_builtin ? `Built-in map in use: <span class="mono">${esc(a.titles_builtin)}</span>. ` : ""}
-          Titles you enter here (per internal file name) win over the rip's own !tags.m3u, ${a.titles_builtin ? "the built-in map, " : ""}tags and file names.
-          Empty values are ignored.</p>
-        <textarea id="titles" style="min-height:180px" spellcheck="false" wrap="off" ${a.writable ? "" : "readonly"}>${esc(a.titles || a.titles_template)}</textarea>
-        <div class="row" style="margin-top:12px">
-          <button class="primary" id="saveTitles" ${a.writable ? "" : "disabled"}>Save titles</button>
-          <span style="flex:1"></span>
-          <a class="button" href="/api/album/${a.id}/tags.m3u" download="!tags.m3u"
-             title="The album's current titles in vgmstream's !tags.m3u format, e.g. to share with the rip's author">Export !tags.m3u</a></div>
-      </section>
-    </div>`;
+    <section class="card"><h2>Tracks</h2>${trackTable(a.tracks, { albumArtist })}</section>`;
   bindTracks(v, a.tracks);
   $("#aPlay").onclick = () => playList(a.tracks);
   $("#aShuffle").onclick = () => playList(shuffleArr(a.tracks.slice()));
   $("#aQueue").onclick = () => enqueue(a.tracks);
-  $("#aMore").onclick = (e) => menu(e, trackItems(() => a.tracks).slice(1));
+  $("#aMore").onclick = (e) => menu(e, [...trackItems(() => a.tracks).filter((_, i) => i === 1 || i === 3), "-",
+    ["Edit album.toml…", () => editToml(a)], ["Edit title map…", () => editTitles(a)],
+    ["Export !tags.m3u", () => { location.href = `/api/album/${a.id}/tags.m3u`; }],
+    ["Regenerate album.toml…", () => regenerateAlbum(a)]]);
   if ($("#coverFile")) $("#coverFile").onchange = async (e) => {
     const f = e.target.files[0];
     if (!f) return;
@@ -890,33 +968,56 @@ async function viewAlbum(v, id) {
     try { await api(`album/${a.id}/cover/delete`, { method: "POST" }); toast("Uploaded cover removed"); setTimeout(route, 800); }
     catch (err) { toast(err.message, true); }
   };
-  $("#saveTitles").onclick = async () => {
-    try {
-      const r = await api(`album/${a.id}/titles`, { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" },
-        body: $("#titles").value });
-      toast(r.message, r.edited); setTimeout(route, 1500);
-    } catch (e) { toast(e.message, true); }
-  };
-  $("#revert").onclick = () => ($("#toml").value = a.toml);
+}
+
+// album.toml and the title map, opened from the album's ⋯ menu
+function editToml(a) {
+  const stateChip = { untouched: ["ok", "generated, untouched"], edited: ["warn", "edited by hand"],
+    legacy: ["warn", "older version"], missing: ["bad", "missing"] }[a.toml_state];
+  modal(`<div class="row" style="justify-content:space-between"><h1>album.toml</h1>
+      <span class="chip ${stateChip[0]}">${stateChip[1]}</span></div>
+    <p class="mono muted">${esc(a.toml_path || "")}</p>
+    <textarea id="toml" spellcheck="false" wrap="off" style="min-height:55vh" ${a.writable ? "" : "readonly"}>${esc(a.toml)}</textarea>
+    <p class="muted">Saving marks the file as edited, so it is never overwritten automatically.</p>
+    <div class="row" style="justify-content:flex-end">
+      <button onclick="closeModal()">Cancel</button>
+      <button class="primary" id="save" ${a.writable ? "" : "disabled"}>Save</button></div>`, true);
   $("#save").onclick = async () => {
     try {
       await api(`album/${a.id}/toml`, { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" },
         body: $("#toml").value });
-      toast("Saved; re-indexing"); setTimeout(route, 1200);
+      closeModal(); toast("Saved; re-indexing"); setTimeout(route, 1200);
     } catch (e) { toast(e.message, true); }
   };
-  $("#regen").onclick = () => {
-    modal(`<h1>Regenerate album.toml?</h1>
-      <p>A fresh file is generated from tags, playlists and file names.</p>
-      ${a.toml_state === "edited" || a.toml_state === "legacy" ? `<div class="warnbox">This file has been edited.
-        Your version is moved to <span class="mono">/meta/.backup/</span> and stops applying.</div>` : ""}
-      <div class="row" style="justify-content:flex-end;margin-top:16px">
-        <button onclick="closeModal()">Cancel</button><button class="danger" id="go">Regenerate</button></div>`);
-    $("#go").onclick = async () => {
-      try { await api(`album/${a.id}/regenerate`, { method: "POST" }); closeModal();
-        toast("Regenerated; re-indexing"); setTimeout(route, 1200);
-      } catch (e) { closeModal(); toast(e.message, true); }
-    };
+}
+function editTitles(a) {
+  modal(`<h1>Title map</h1>
+    <p class="muted">${a.titles_builtin ? `Built-in map in use: <span class="mono">${esc(a.titles_builtin)}</span>. ` : ""}
+      Titles here (per internal file name) win over the rip's own !tags.m3u, ${a.titles_builtin ? "the built-in map, " : ""}tags and file names.
+      Empty values are ignored. “Rename…” on a track writes here too.</p>
+    <textarea id="titles" spellcheck="false" wrap="off" style="min-height:50vh" ${a.writable ? "" : "readonly"}>${esc(a.titles || a.titles_template)}</textarea>
+    <div class="row" style="justify-content:flex-end;margin-top:12px">
+      <button onclick="closeModal()">Cancel</button>
+      <button class="primary" id="saveTitles" ${a.writable ? "" : "disabled"}>Save titles</button></div>`, true);
+  $("#saveTitles").onclick = async () => {
+    try {
+      const r = await api(`album/${a.id}/titles`, { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" },
+        body: $("#titles").value });
+      closeModal(); toast(r.message, r.edited); setTimeout(route, 1500);
+    } catch (e) { toast(e.message, true); }
+  };
+}
+function regenerateAlbum(a) {
+  modal(`<h1>Regenerate album.toml?</h1>
+    <p>A fresh file is generated from tags, playlists, your title map and file names.</p>
+    ${a.toml_state === "edited" || a.toml_state === "legacy" ? `<div class="warnbox">This file has been edited.
+      Your version is moved to <span class="mono">/meta/.backup/</span> and stops applying.</div>` : ""}
+    <div class="row" style="justify-content:flex-end;margin-top:16px">
+      <button onclick="closeModal()">Cancel</button><button class="danger" id="go">Regenerate</button></div>`);
+  $("#go").onclick = async () => {
+    try { await api(`album/${a.id}/regenerate`, { method: "POST" }); closeModal();
+      toast("Regenerated; re-indexing"); setTimeout(route, 1200);
+    } catch (e) { closeModal(); toast(e.message, true); }
   };
 }
 

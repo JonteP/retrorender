@@ -13,6 +13,7 @@ Routes (all require HTTP Basic auth with the [web] or [subsonic] credentials):
   GET  /api/cover/<album id>      cover image
   POST /api/album/<id>/cover      upload a cover (body = JPEG or PNG), stored in /meta
   POST /api/album/<id>/cover/delete  remove an uploaded cover
+  POST /api/song/<id>/title       rename one track {title}: titles.toml + album.toml
   GET  /api/engines               what each engine can show and control (see Engine.describe)
   GET  /api/song/<id>/engine      the same for one track (voice names etc.)
   GET  /api/playlists             playlists (without songs)
@@ -118,6 +119,8 @@ class WebUI:
                            if self.registry else []) or True
         if name == "song" and len(parts) >= 3 and parts[2] == "engine":
             return h._json(*self.song_engine(parts[1])) or True
+        if name == "song" and len(parts) >= 3 and parts[2] == "title" and post:
+            return h._json(*self.set_title(parts[1], h)) or True
         if name in ("playlists", "playlist"):
             return h._json(*self._playlists(h, parts, post)) or True
         if name == "album" and len(parts) >= 2:
@@ -333,6 +336,33 @@ class WebUI:
             return eng.describe(f, t), 200
         except Exception as e:      # noqa: BLE001 - shown on the page
             return {"error": str(e)}, 500
+
+    def set_title(self, sid: str, h):
+        """Rename one track. The title goes to the album's titles.toml (so it survives
+        regeneration) and straight into album.toml, also when that was edited by hand."""
+        from txtp import base_and_options
+        if not self.meta.writable:
+            return {"error": "the meta folder is not writable"}, 403
+        s = self.lib.index.songs.get(sid)
+        if s is None:
+            return {"error": "song not found"}, 404
+        try:
+            title = str(json.loads(self._body(h) or "{}").get("title", "")).strip()
+        except ValueError:
+            return {"error": "bad request"}, 400
+        if not title:
+            return {"error": "the title is empty"}, 400
+        al = self.lib.index.albums[s.album_id]
+        f = self.lib.root / s.rel
+        eng, tracks = self.probe(f)
+        n = len(tracks)
+        base = base_and_options(f.name)[0]
+        self.meta.set_user_title(al.key, f"{base}#{s.sub}" if n > 1 else base, title)
+        if not self.meta.set_track_title(al.key, f.name, s.sub, n, title):
+            self.lib.ensure_meta(al.key, f, eng, tracks)
+        s.title = title                                 # shows at once; the scan follows
+        threading.Thread(target=self.lib.scan, daemon=True).start()
+        return {"ok": True, "title": title}, 200
 
     # --- playlists -----------------------------------------------------------------------
     def _playlist_brief(self, pl: dict) -> dict:
@@ -598,17 +628,21 @@ class WebUI:
     def _titles_template(self, al) -> str:
         from txtp import base_and_options
         ix = self.lib.index
+        from meta import _tv
         keys = []
         for sid in al.songs:
             s = ix.songs.get(sid)
             if s:
                 k = base_and_options(Path(s.rel).name)[0]
+                if al.key.startswith("file:"):
+                    k += f"#{s.sub}"                    # subtunes inside one file
                 if k not in keys:
                     keys.append(k)
         lines = ["# Track titles for this album, keyed by internal file name (case-insensitive,",
-                 "# without extension and TXTP options). This file is yours; retrorender never",
-                 "# overwrites it. Saving regenerates an untouched album.toml.", "", "[titles]"]
-        lines += [f'{k} = ""' for k in keys]
+                 "# without extension and TXTP options; 'name#2' is subtune 2 inside one file).",
+                 "# This file is yours; retrorender never overwrites it.",
+                 "# Saving regenerates an untouched album.toml.", "", "[titles]"]
+        lines += [f'{_tv(k)} = ""' for k in keys]
         return "\n".join(lines) + "\n"
 
     def save_titles(self, al, h):
