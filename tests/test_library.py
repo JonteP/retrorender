@@ -169,15 +169,31 @@ d = get(f"/api/song/{mm2.songs[0]}/engine")
 assert d["insight"] == "voices" and d["voices"] == ["Pulse 1", "Pulse 2"], d
 assert get("/api/engines")[0]["engine"] == "fake"
 
+# --- renaming one track: titles.toml + album.toml, which stays untouched -------------------
+from meta import gen_status  # noqa: E402
+h = Req("POST", json.dumps({"title": "Boss Theme"}).encode())
+assert web.handle(h, f"/api/song/{kirby.songs[1]}/title", {}) and h.out["ok"], h.out
+assert '"kirby#1" = "Boss Theme"' in meta.titles_path(kirby.key).read_text()
+text = meta.path_for(kirby.key).read_text()
+assert 'title = "Boss Theme"' in text and gen_status(text)[1], text   # still untouched
+h = Req("POST", json.dumps({"title": "Wily 1"}).encode())
+web.handle(h, f"/api/song/{mm2.songs[1]}/title", {})
+assert '"02 wily" = "Wily 1"' in meta.titles_path(mm2.key).read_text()
+meta.delete(mm2.key)                       # a regenerated file keeps the new title
+lib.scan()
+assert [lib.index.songs[s].title for s in mm2.songs][1] == "Wily 1"
+assert lib.index.songs[kirby.songs[1]].title == "Boss Theme"
+ix = lib.index
+
 # --- playlists ----------------------------------------------------------------------------
 pl = post("/api/playlists", {"name": "Bosses", "songs": [mm2.songs[1], kirby.songs[0]]})
 assert pl["songs"] == 2 and pl["name"] == "Bosses"
 pid = pl["id"]
 out = post(f"/api/playlist/{pid}", {"add": [mm2.songs[0]], "name": "Boss themes"})
 assert out["name"] == "Boss themes" and [x["title"] for x in out["tracks"]] == \
-    ["Dr. Wily Stage 1", "Kirby 1", "Title"]
+    ["Wily 1", "Kirby 1", "Title"]
 out = post(f"/api/playlist/{pid}", {"songs": [mm2.songs[0], mm2.songs[1]]})
-assert [x["title"] for x in out["tracks"]] == ["Title", "Dr. Wily Stage 1"]
+assert [x["title"] for x in out["tracks"]] == ["Title", "Wily 1"]
 assert get("/api/tracks", {"playlist": pid})["total"] == 2
 assert get("/api/playlists")["playlists"][0]["name"] == "Boss themes"
 assert get("/api/playlist/pl-nothere")["error"] == "no such playlist"
@@ -190,8 +206,8 @@ raw["songs"][0]["id"] = "tr-0000000000000000"
 raw["songs"].insert(1, {"id": "tr-gone", "path": "NES/gone.fake", "sub": 0})
 (metadir / "_playlists" / f"{pid}.json").write_text(json.dumps(raw))
 out = get(f"/api/playlist/{pid}")
-assert [x["title"] for x in out["tracks"]] == ["Title", "Dr. Wily Stage 1"] and out["missing"] == 1
-pls.update(pid, remove_at=[1])                     # "Dr. Wily Stage 1", not the gone entry
+assert [x["title"] for x in out["tracks"]] == ["Title", "Wily 1"] and out["missing"] == 1
+pls.update(pid, remove_at=[1])                     # "Wily 1", not the gone entry
 raw = json.loads((metadir / "_playlists" / f"{pid}.json").read_text())
 assert [e["path"] for e in raw["songs"]] == ["NES/Mega Man 2/01 Title.fake", "NES/gone.fake"], raw
 
@@ -211,7 +227,7 @@ r = rest("getPlaylists")
 assert r["status"] == "ok" and r["playlists"]["playlist"][0]["songCount"] == 1, r
 r = rest("createPlaylist", name="From an app", **{"songId[]": [kirby.songs[1], kirby.songs[2]]})
 new = r["playlist"]["id"]
-assert [e["title"] for e in r["playlist"]["entry"]] == ["Kirby 2", "Kirby 3"]
+assert [e["title"] for e in r["playlist"]["entry"]] == ["Boss Theme", "Kirby 3"]
 rest("updatePlaylist", playlistId=new, songIdToAdd=mm2.songs[2], **{"songIndexToRemove[]": ["0"]})
 assert [e["title"] for e in rest("getPlaylist", id=new)["playlist"]["entry"]] == ["Kirby 3", "Ending"]
 rest("deletePlaylist", id=new)

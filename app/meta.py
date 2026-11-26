@@ -416,6 +416,8 @@ class MetaStore:
                 title, src, track_no = user_map.get(base) or builtin_map[base], "title map", num
                 if opts and bases.get(base, 0) > 1:
                     title += f" ({describe_options(opts)})"
+            elif n > 1 and f"{base}#{t.index}" in user_map:    # your title for one subtune
+                title, src, track_no = user_map[f"{base}#{t.index}"], "title map", t.index + 1
             elif n > 1 and nzp and nzp.get("title"):           # NEZplug-spellista
                 title, src = nzp["title"], "sidecar"
                 track_no = (nez_file.index(nzp) + 1)
@@ -508,6 +510,74 @@ class MetaStore:
             tmp.replace(p)
             log.info("generated %s", p)
         return text
+
+    # --- single edits from the web UI ----------------------------------------------------
+    def set_user_title(self, album_key: str, name: str, title: str):
+        """Sets one title in the album's titles.toml (kept across regeneration). name = the
+        internal file name without extension, or 'name#<subtune>' inside one file."""
+        tp = self.titles_path(album_key)
+        line = f"{_tv(name)} = {_tv(title)}"
+        text = tp.read_text("utf-8") if tp.is_file() else (
+            "# Track titles for this album, keyed by internal file name (case-insensitive,\n"
+            "# without extension and TXTP options; 'name#2' is subtune 2 inside one file).\n"
+            "# This file is yours; retrorender never overwrites it.\n\n[titles]\n")
+        pat = re.compile(rf'^\s*(?:{re.escape(name)}|"{re.escape(name)}")\s*=.*$', re.M | re.I)
+        if pat.search(text):
+            text = pat.sub(lambda m: line, text, count=1)
+        else:
+            text = text.rstrip("\n") + "\n" + line + "\n"
+        tomllib.loads(text)                         # never write a broken file
+        tp.parent.mkdir(parents=True, exist_ok=True)
+        tmp = tp.with_suffix(".tmp")
+        tmp.write_text(text, "utf-8")
+        tmp.replace(tp)
+
+    def set_track_title(self, album_key: str, filename: str, sub: int, n_sub: int,
+                        title: str) -> bool:
+        """Sets one track's title in album.toml and leaves everything else as it is. An
+        untouched file stays untouched (its checksum is updated), so later generations
+        still replace it; the title survives that through titles.toml."""
+        p = self.path_for(album_key)
+        if not p or not p.is_file():
+            return False
+        text = p.read_text("utf-8")
+        ver, untouched = gen_status(text)
+        lines = text.split("\n")
+        starts = [i for i, x in enumerate(lines) if x.strip() == "[[track]]"]
+        done = False
+        for k, a in enumerate(starts):
+            b = next((j for j in range(a + 1, len(lines)) if lines[j].lstrip().startswith("[")),
+                     len(lines))
+            try:
+                e = tomllib.loads("\n".join(lines[a + 1:b]))
+            except tomllib.TOMLDecodeError:
+                continue
+            if e.get("file") != filename or (n_sub > 1 and int(e.get("sub", -1)) != sub):
+                continue
+            new = f"title = {_tv(title)}"
+            t_at = next((j for j in range(a + 1, b) if re.match(r"\s*title\s*=", lines[j])), None)
+            if t_at is not None:
+                lines[t_at] = new
+            else:
+                f_at = next(j for j in range(a + 1, b) if re.match(r"\s*file\s*=", lines[j]))
+                lines.insert(f_at + 1 + (n_sub > 1 and "sub" in e), new)
+            done = True
+            break
+        if not done:
+            block = ["", "[[track]]", f"file = {_tv(filename)}"]
+            if n_sub > 1:
+                block.append(f"sub = {sub}")
+            lines = lines + block + [f"title = {_tv(title)}"]
+        text = "\n".join(lines)
+        if untouched:
+            first, _, rest = text.partition("\n")
+            text = f"{_MARK} {ver} {_sha(rest)}\n" + rest
+        tomllib.loads(text.partition("\n")[2])
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(text, "utf-8")
+        tmp.replace(p)
+        self._cache.pop(str(p), None)
+        return True
 
     # --- applying -------------------------------------------------------------------
     @staticmethod

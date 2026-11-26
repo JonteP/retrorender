@@ -86,11 +86,17 @@ webbgränssnittet (kollas var femte minut, `[updates]` i config.toml). Starta d�
 - **Library:** bläddra per konsol, år/årtionde, ljudchip och kompositör, sortera efter
   titel, år eller senast tillagt, och sök i album, kompositörer, konsoler och spår.
   "Play all" och "Shuffle" spelar allt som visas; för en kompositör bara deras egna spår.
-- **Album:** spårlista med uppspelning, eget omslag ("Change cover…"), redigering av
-  `album.toml` (valideras innan den sparas), "Regenerate…", titelkarta och "Export !tags.m3u".
+- **Album:** spårlista med uppspelning och eget omslag ("Change cover…"). ⋯ på en låt har
+  "Rename…" (titeln redigeras direkt i listan) och "Info…" (fil, motor, röster, speltid och
+  varför). Albumets ⋯ öppnar `album.toml` (valideras innan den sparas), titelkartan,
+  "Export !tags.m3u" och "Regenerate…".
 - **Playlists:** se [Kö och spellistor](#kö-och-spellistor).
 - **joshw:** se [joshw.info](#joshwinfo).
 - **Catalog:** dolda dubbletter, album med samma spelnyckel och spelnycklar per album.
+
+**Byta namn på en låt:** titeln skrivs till albumets `titles.toml` (så den överlever
+regenerering) och direkt in i `album.toml`. En genererad album.toml räknas fortfarande som
+orörd. För delspår i en fil heter nyckeln `namn#2`, t.ex. `"jaiseqs#12" = "Dragon Roost Island"`.
 
 Spelaren längst ner spelar i webbläsaren eller på en apparat i nätet. Play på en låt köar
 resten av albumet. Mellanslag pausar och spelar.
