@@ -132,14 +132,15 @@ class DlnaDevice:
     def poll(self) -> dict:
         info = self._soap("AVTransport", "GetTransportInfo", {"InstanceID": 0}, timeout=4)
         state = info.get("CurrentTransportState", "STOPPED")
-        pos = None
+        pos, uri = None, None
         try:
             p = self._soap("AVTransport", "GetPositionInfo", {"InstanceID": 0}, timeout=4)
             pos = _hms(p.get("RelTime", ""))
+            uri = p.get("TrackURI") or None
         except Exception:           # noqa: BLE001
             pass
         st = {"PLAYING": "PLAYING", "PAUSED_PLAYBACK": "PAUSED", "TRANSITIONING": "BUFFERING"}.get(state, "IDLE")
-        self.status = {"state": st, "position": pos, "raw": state}
+        self.status = {"state": st, "position": pos, "raw": state, "uri": uri}
         return self.status
 
     def pause(self): self._soap("AVTransport", "Pause", {"InstanceID": 0})
