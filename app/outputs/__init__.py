@@ -40,6 +40,11 @@ def local_ip_for(host: str) -> str:
         s.close()
 
 
+def _same_url(a: str, b: str) -> bool:
+    from urllib.parse import unquote
+    return unquote(a.replace("&amp;", "&")) == unquote(b)
+
+
 class Session:
     """A queue playing on one device."""
 
@@ -68,6 +73,7 @@ class Session:
         self.seen_playing = False
         self.started_at = time.time()
         self.dev.status = {"state": "IDLE"}
+        self.url = url
         self.dev.load(url, mime, meta, s.duration or None)
 
     def _run(self):
@@ -89,9 +95,10 @@ class Session:
         self.stopped = True
 
     def _follow(self) -> bool:
-        """Wait until the current track ends. True = finished, go on; False = replaced."""
+        """Wait until the current track ends. True = finished, go on; False = replaced or
+        stopped. States only count once the device reports our own URL: right after a load
+        it may still report the previous track (an LG TV does while it asks for approval)."""
         idx = self.index
-        expected = (self.song.duration or 0) + 8
         while not self.stopped and self.index == idx:
             self._wake.wait(2.0)
             self._wake.clear()
@@ -101,9 +108,13 @@ class Session:
                 st = self.dev.poll() if isinstance(self.dev, DlnaDevice) else self.dev.status
             except Exception:           # noqa: BLE001 - a missed poll is not an error
                 continue
+            uri = st.get("uri")
+            if uri and not _same_url(uri, self.url):
+                continue                    # still the previous track
             state = st.get("state")
             if state in ("PLAYING", "BUFFERING", "PAUSED"):
                 self.seen_playing = True
+                self.error = ""
             elif self.seen_playing and state == "IDLE":
                 reason = st.get("idle_reason")
                 if reason in (None, "FINISHED", "ERROR"):
@@ -112,11 +123,14 @@ class Session:
                     self.stopped = True
                     return False
                 # INTERRUPTED: our own next load replaced it; keep waiting
-            if not self.seen_playing and time.time() - self.started_at > 30:
-                self.error = "the device did not start playing"
-                return True
-            if state == "IDLE" and expected and time.time() - self.started_at > expected:
-                return True
+            if not self.seen_playing:
+                waited = time.time() - self.started_at
+                if waited > 20:
+                    self.error = "waiting for the device (approve playback on the TV?)"
+                if waited > 180:            # never started: stop instead of skipping
+                    self.error = "the device did not start playing"
+                    self.stopped = True
+                    return False
         return False
 
     def _advance(self, step: int) -> bool:
