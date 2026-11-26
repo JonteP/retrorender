@@ -20,6 +20,7 @@ import numpy as np
 
 from .banks import BankSet, decode
 from .seq import Sequence
+from .seq1 import Sequence1
 
 GAME_RATE = 32000.0
 SUBFRAMES_PER_S = 400.0               # 80 samples at 32 kHz
@@ -27,7 +28,7 @@ ENV_UNITS_PER_S = 600.0               # 48000 / 32000 per subframe
 FX_SECONDS = 64 * 80 / GAME_RATE      # 160 ms
 FX_TAPS = np.array([0, 0x1000, 0, 0, 0, 0, 0x3FFF, 0], np.float32) / 32768.0
 FX_RETURN = 0x7000 / 32768.0
-MASTER = 0.35                         # fixed gain so we can stream without a second pass
+MASTER = {2: 0.35, 1: 0.7}            # fixed gain per JAudio version (WW mixes ~6 dB lower)
 
 CURVES = [
     [1.0, 0.9375, 0.875, 0.8125, 0.75, 0.6875, 0.625, 0.5625, 0.5, 0.4375, 0.375, 0.3125, 0.25, 0.1875, 0.125, 0.0625, 0.0],
@@ -107,8 +108,8 @@ class Env:
             self.update()
 
     def release(self):
-        if self.osc is None and not self.direct:
-            self.state = 0
+        if not self.direct and (self.osc is None or not self.osc.rel):
+            self.state = 0          # no release table and no direct release: stop
             return
         if self.direct:
             self.t, self.start, self.target, self.point = 0.0, self.val, 0.0, 0
@@ -233,19 +234,30 @@ def sync_tracks(events):
             if max(k) <= 31 and (progs.get(t, 0) >= 3 or counts.get(t, 0) >= 32)}
 
 
-def analyse(data: bytes, max_seconds=900.0):
-    """-> (loop (start, end) or None, end time, has audible notes)."""
-    seq = Sequence(data, max_seconds=max_seconds, loops=2)
-    seq.run()
+def _seq(data, version, **kw):
+    return (Sequence1 if version == 1 else Sequence)(data, **kw)
+
+
+def analyse(data: bytes, max_seconds=600.0, version=2):
+    """-> (loop (start, end) or None, end time, has audible notes). Stops at the first
+    loop; a program with no notes in its first two minutes (sound effects) is given up on."""
+    seq = _seq(data, version, max_seconds=120.0, loops=1)
+    result = seq.run()
+    if result == "timeout" and not any(e.kind in ("on", "gate") for e in seq.events):
+        return None, seq.time, False
+    if result == "timeout":
+        seq = _seq(data, version, max_seconds=max_seconds, loops=1)
+        seq.run()
     mute = sync_tracks(seq.events)
     audible = any(e.kind in ("on", "gate") and e.track not in mute for e in seq.events)
     return seq.loop, seq.time, audible
 
 
-def stream(data: bytes, bankset: BankSet, rate: int, seconds: float, fx_send=0.35,
-           chunk_s=0.5) -> Iterator[np.ndarray]:
-    """Yield float32 stereo chunks (n, 2) covering `seconds` of audio."""
-    seq = Sequence(data, max_seconds=seconds + 1.0, loops=10 ** 9)
+def stream(data: bytes, bankset, rate: int, seconds: float, fx_send=0.35,
+           chunk_s=0.5, version=2) -> Iterator[np.ndarray]:
+    """Yield float32 stereo chunks (n, 2) covering `seconds` of audio. version 1 = JAudio 1
+    (Wind Waker), 2 = JAudio2 (Twilight Princess, Galaxy)."""
+    seq = _seq(data, version, max_seconds=seconds + 1.0, loops=10 ** 9)
     seq.run()
     events = sorted(seq.events, key=lambda e: e.tick)
     mute = sync_tracks(events)
@@ -279,7 +291,7 @@ def stream(data: bytes, bankset: BankSet, rate: int, seconds: float, fx_send=0.3
                     old = slots.pop((e.track, nid), None)
                     if old:
                         old.release()
-                    hit = bankset.lookup(bank, prg, key)
+                    hit = bankset.lookup(bank, prg, key, vel)
                     if not hit:
                         continue
                     rel = e.time + e.a[2] if e.kind == "gate" and e.a[2] is not None else None
@@ -300,7 +312,11 @@ def stream(data: bytes, bankset: BankSet, rate: int, seconds: float, fx_send=0.3
                 elif e.kind == "off":
                     v = slots.pop((e.track, e.a[0]), None)
                     if v:
+                        if len(e.a) > 1 and e.a[1]:
+                            v.env.direct = e.a[1]          # note-off with its own release time
                         v.release()
+                elif e.kind == "detach":                   # JAudio 1: slot freed, note rings on
+                    slots.pop((e.track, e.a[0]), None)
             a, b = s * sub, s * sub + sub
             alive = []
             for v in voices:
@@ -321,7 +337,7 @@ def stream(data: bytes, bankset: BankSet, rate: int, seconds: float, fx_send=0.3
         if fx_send:
             L = L + FX_RETURN * fxl.process(buf[2])
             R = R + FX_RETURN * fxr.process(buf[3])
-        out = np.stack([L, R], 1) * MASTER
+        out = np.stack([L, R], 1) * MASTER[version]
         out = np.where(np.abs(out) > 0.9, np.sign(out) * (0.9 + 0.1 * np.tanh((np.abs(out) - 0.9) / 0.1)), out)
         n = min(len(out), total - pos)
         yield out[:n]

@@ -184,7 +184,10 @@ class Library:
         eng, tracks = self.probe(f)
         if eng is None:
             raise ValueError("inget stöd för formatet")
-        t = tracks[sub]
+        # sub is the engine's track index; engines may skip indices (e.g. silent sequences)
+        t = next((x for x in tracks if x.index == sub), None)
+        if t is None:
+            raise ValueError(f"no track {sub} in {f.name}")
         key = self.album_key(f, len(tracks))
         meta = self.ensure_meta(key, f, eng, tracks)
         entry = MetaStore.track_entry(meta, f.name, t.index, len(tracks))

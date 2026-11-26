@@ -45,3 +45,43 @@ x = np.zeros(400, np.float32); x[0] = 1.0
 y = np.concatenate([fx.process(x[:150]), fx.process(x[150:])])
 assert abs(y[99] - 0x1000 / 32768) < 1e-6 and abs(y[94] - 0x3FFF / 32768) < 1e-6, np.nonzero(y)[0][:4]
 print("ok")
+
+# --- JAudio 1 (Wind Waker) encoding: tempo, two gate notes, unconditional jump back ---
+from engines.jaudio.seq1 import Sequence1  # noqa: E402
+from engines.jaudio.rarc import read_rarc  # noqa: E402
+
+ww = bytes([
+    0xFD, 0x00, 0x78,              # tempo 120
+    0x3C, 0x08, 0x64, 0x64, 0x60,  # at 0x03: key 60, 1 duration byte, vel 100, gate 100 %, 96 ticks
+    0x40, 0x08, 0x64, 0x32, 0x60,  # key 64, gate 50 %
+    0xC8, 0x00, 0x00, 0x00, 0x03,  # jump (always) to 0x03
+])
+s1 = Sequence1(ww, max_seconds=10, loops=2)
+assert s1.run() == "looped"
+g1 = [e for e in s1.events if e.kind == "gate"]
+assert [g.a[0] for g in g1[:3]] == [60, 64, 60], g1[:3]
+assert abs(g1[0].a[2] - 1.0) < 0.01 and abs(g1[1].a[2] - 0.5) < 0.01       # gate percentage
+assert abs((s1.loop[1] - s1.loop[0]) - 2.0) < 0.02, s1.loop
+
+# --- RARC: one folder with one file ---
+def rarc(files):
+    names = b"\0".join([b".", b".."] + [n for n, _ in files]) + b"\0"
+    data = b"".join(d for _, d in files)
+    entries = b""
+    off = 0
+    name_off = 5
+    for n, d in files:
+        entries += struct.pack(">HHBBHIII", 0, 0, 0x11, 0, name_off, off, len(d), 0)
+        name_off += len(n) + 1
+        off += len(d)
+    nodes = struct.pack(">4sIHHI", b"ROOT", 0, 0, len(files), 0)
+    info = struct.pack(">6I", 1, 0x20, len(files), 0x20 + len(nodes), len(names), 0x20 + len(nodes) + len(entries))
+    info += b"\0" * 8
+    body = info + nodes + entries + names
+    header = struct.pack(">4sIIIIII", b"RARC", 0, 0x20, len(body), len(data), len(data), 0) + b"\0" * 4
+    return header + body + data
+
+import struct  # noqa: E402
+arc = read_rarc(rarc([(b"song.bms", ww), (b"jingle.bms", b"\xff")]))
+assert arc == {"song.bms": ww, "jingle.bms": b"\xff"}, list(arc)
+print("ok: jaudio 1")

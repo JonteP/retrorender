@@ -225,7 +225,7 @@ class BankSet:
             waves = parse_wsys(d, wsys[wid], aw_dir)
             self.banks[gid] = (insts, waves)
 
-    def lookup(self, bank, prog, key):
+    def lookup(self, bank, prog, key, vel=127):
         """-> (Inst, Region, Wave, extra) or None."""
         b = self.banks.get(bank)
         if not b:
