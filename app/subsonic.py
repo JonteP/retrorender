@@ -15,7 +15,7 @@ from pathlib import Path
 log = logging.getLogger("subsonic")
 
 API_VERSION = "1.16.1"
-SERVER_VERSION = "0.12"
+SERVER_VERSION = "0.13"
 
 
 class SubsonicError(Exception):
@@ -40,6 +40,7 @@ class Subsonic:
         self.user = str(sc.get("user", "musicassistant"))
         self.password = str(sc.get("password", "retro"))
         self.on_star = lambda rel: None      # replaced by the server (pins downloads)
+        self.playlists = None                # set by the server (playlists.Playlists)
 
     # --- inramning ------------------------------------------------------------
     def handle(self, handler, method: str, q: dict):
@@ -168,9 +169,10 @@ class Subsonic:
         return {"openSubsonicExtensions": []}
 
     def m_getUser(self, q, h):
-        roles = {k: True for k in ("streamRole", "downloadRole", "scrobblingEnabled")}
+        roles = {k: True for k in ("streamRole", "downloadRole", "scrobblingEnabled",
+                                   "playlistRole")}
         roles.update({k: False for k in ("adminRole", "settingsRole", "uploadRole",
-                                         "playlistRole", "coverArtRole", "commentRole",
+                                         "coverArtRole", "commentRole",
                                          "podcastRole", "jukeboxRole", "shareRole",
                                          "videoConversionRole")})
         return {"user": {"username": self.user, "folder": [1], **roles}}
@@ -303,11 +305,76 @@ class Subsonic:
     def m_getStarred(self, q, h):
         return {"starred": {"artist": [], "album": [], "song": []}}
 
+    # --- playlists (the same ones as in the web UI) -----------------------------------
+    def _playlist(self, pl, with_songs=False) -> dict:
+        songs = self.playlists.resolve(pl["songs"])
+        cover = next((s.album_id for s in songs
+                      if self.ix.albums.get(s.album_id) and self.ix.albums[s.album_id].cover), None)
+        d = _clean({"id": pl["id"], "name": pl["name"], "comment": pl.get("comment") or None,
+                    "owner": self.user, "public": False, "songCount": len(songs),
+                    "duration": int(sum(s.duration for s in songs)),
+                    "created": pl.get("created"), "changed": pl.get("changed"),
+                    "coverArt": cover})
+        if with_songs:
+            d["entry"] = [self._song(s) for s in songs]
+        return d
+
+    def _pl(self, pid):
+        if self.playlists is None:
+            raise SubsonicError(70, "no such playlist")
+        try:
+            return self.playlists.get(pid)
+        except KeyError:
+            raise SubsonicError(70, "no such playlist")
+
+    @staticmethod
+    def _all(q, key) -> list:
+        """Repeated parameters (songId=…&songId=…) arrive as a list from the server."""
+        v = q.get(key + "[]", q.get(key))
+        if v is None:
+            return []
+        return v if isinstance(v, list) else [v]
+
     def m_getPlaylists(self, q, h):
-        return {"playlists": {"playlist": []}}
+        pls = self.playlists.list() if self.playlists else []
+        return {"playlists": {"playlist": [self._playlist(p) for p in pls]}}
 
     def m_getPlaylist(self, q, h):
-        raise SubsonicError(70, "no such playlist")
+        return {"playlist": self._playlist(self._pl(q.get("id", "")), with_songs=True)}
+
+    def m_createPlaylist(self, q, h):
+        if self.playlists is None or not self.playlists.writable:
+            raise SubsonicError(50, "playlists are read-only")
+        songs = self._all(q, "songId")
+        try:
+            if q.get("playlistId"):
+                pl = self.playlists.update(q["playlistId"], song_ids=songs)
+            else:
+                pl = self.playlists.create(q.get("name", ""), songs)
+        except KeyError:
+            raise SubsonicError(70, "no such playlist")
+        return {"playlist": self._playlist(pl, with_songs=True)}
+
+    def m_updatePlaylist(self, q, h):
+        if self.playlists is None or not self.playlists.writable:
+            raise SubsonicError(50, "playlists are read-only")
+        try:
+            self.playlists.update(q.get("playlistId", ""), name=q.get("name"),
+                                  comment=q.get("comment"),
+                                  add=self._all(q, "songIdToAdd"),
+                                  remove_at=[int(i) for i in self._all(q, "songIndexToRemove")])
+        except KeyError:
+            raise SubsonicError(70, "no such playlist")
+        return {}
+
+    def m_deletePlaylist(self, q, h):
+        if self.playlists is None or not self.playlists.writable:
+            raise SubsonicError(50, "playlists are read-only")
+        try:
+            self.playlists.delete(q.get("id", ""))
+        except KeyError:
+            raise SubsonicError(70, "no such playlist")
+        return {}
 
     def m_getPodcasts(self, q, h):
         return {"podcasts": {"channel": []}}

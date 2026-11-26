@@ -256,6 +256,18 @@ def analyse(data: bytes, max_seconds=600.0, version=2):
     return seq.loop, seq.time, audible
 
 
+def track_names(data: bytes, version=2, max_seconds=120.0) -> list[str]:
+    """The sequence's tracks that play notes, in order of first note (markers left out)."""
+    seq = _seq(data, version, max_seconds=max_seconds, loops=1)
+    seq.run()
+    mute = sync_tracks(seq.events)
+    out = []
+    for e in sorted(seq.events, key=lambda e: e.tick):
+        if e.kind in ("on", "gate") and e.track not in mute and e.track not in out:
+            out.append(e.track)
+    return out
+
+
 def stream(data: bytes, bankset, rate: int, seconds: float, fx_send=0.35,
            chunk_s=0.5, version=2) -> Iterator[np.ndarray]:
     """Yield float32 stereo chunks (n, 2) covering `seconds` of audio. version 1 = JAudio 1

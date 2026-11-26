@@ -41,9 +41,29 @@ class OpenmptEngine(Engine):
         L.openmpt_module_get_metadata.argtypes = [C.c_void_p, C.c_char_p]
         L.openmpt_module_get_metadata.restype = C.c_void_p
         L.openmpt_free_string.argtypes = [C.c_void_p]
+        L.openmpt_module_get_num_channels.argtypes = [C.c_void_p]
+        L.openmpt_module_get_num_channels.restype = C.c_int32
+        L.openmpt_module_get_channel_name.argtypes = [C.c_void_p, C.c_int32]
+        L.openmpt_module_get_channel_name.restype = C.c_void_p
+
+    insight = "pattern"
 
     def available(self) -> bool:
         return self.lib is not None
+
+    def voices(self, path: Path, track: TrackInfo | None = None) -> list[str]:
+        mod = self._open(path)
+        try:
+            out = []
+            for i in range(self.lib.openmpt_module_get_num_channels(mod)):
+                p = self.lib.openmpt_module_get_channel_name(mod, i)
+                name = (C.cast(p, C.c_char_p).value or b"").decode("utf-8", "replace") if p else ""
+                if p:
+                    self.lib.openmpt_free_string(p)
+                out.append(name.strip() or f"Channel {i + 1}")
+            return out
+        finally:
+            self.lib.openmpt_module_destroy(mod)
 
     def _open(self, path: Path):
         data = path.read_bytes()

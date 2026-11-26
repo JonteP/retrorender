@@ -53,12 +53,27 @@ class GmeEngine(Engine):
         L.gme_play.restype = C.c_char_p
         L.gme_delete.argtypes = [C.c_void_p]
         L.gme_ignore_silence.argtypes = [C.c_void_p, C.c_int]
+        L.gme_voice_count.argtypes = [C.c_void_p]
+        L.gme_voice_count.restype = C.c_int
+        L.gme_voice_name.argtypes = [C.c_void_p, C.c_int]
+        L.gme_voice_name.restype = C.c_char_p
         self._autoload = getattr(L, "gme_set_autoload_playback_limit", None)
         if self._autoload is not None:
             self._autoload.argtypes = [C.c_void_p, C.c_int]
 
+    insight = "voices"
+
     def available(self) -> bool:
         return self.lib is not None
+
+    def voices(self, path: Path, track: TrackInfo | None = None) -> list[str]:
+        emu = self._open(path)
+        try:
+            self.lib.gme_start_track(emu, track.index if track else 0)
+            return [_s(self.lib.gme_voice_name(emu, i))
+                    for i in range(self.lib.gme_voice_count(emu))]
+        finally:
+            self.lib.gme_delete(emu)
 
     def _open(self, path: Path):
         data = path.read_bytes()

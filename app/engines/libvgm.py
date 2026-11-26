@@ -30,8 +30,16 @@ class LibvgmEngine(Engine):
         self.ffmpeg = shutil.which(ffmpeg)
         self.args = args or DEFAULT_ARGS
 
+    insight = "registers"
+
     def available(self) -> bool:
         return bool(self.cli and self.ffmpeg)
+
+    def voices(self, path: Path, track: TrackInfo | None = None) -> list[str]:
+        """The sound chips (vgm2wav gives no per-voice access)."""
+        if path.suffix.lower() not in (".vgm", ".vgz"):
+            return []
+        return list(vgmfile.parse(path).chips)
 
     def selftest(self) -> str:
         """First lines of vgm2wav's help text, so the flags can be checked via /health."""

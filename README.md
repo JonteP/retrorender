@@ -10,6 +10,7 @@ Chromecast/DLNA-apparater i nätet (TV, nätverkshögtalare) eller via Subsonic-
 - [Installera på TrueNAS SCALE](#installera-på-truenas-scale)
 - [Uppdateringar](#uppdateringar)
 - [Webbgränssnittet](#webbgränssnittet)
+- [Kö och spellistor](#kö-och-spellistor)
 - [Spela på TV och högtalare](#spela-på-tv-och-högtalare)
 - [Biblioteket](#biblioteket)
 - [Metadata: album.toml och titelkartor](#metadata-albumtoml-och-titelkartor)
@@ -82,14 +83,36 @@ webbgränssnittet (kollas var femte minut, `[updates]` i config.toml). Starta d�
 
 - **Overview:** version, motorer, index- och katalogstatus, "Re-index now" och
   "Regenerate all metadata…" (med förhandsvisning och bekräftelse).
-- **Library:** bläddra per konsol och kompositör, sök i album, kompositörer, konsoler och spår.
-- **Album:** spårlista med uppspelning, redigering av `album.toml` (valideras innan den
-  sparas), "Regenerate…", titelkarta och "Export !tags.m3u".
+- **Library:** bläddra per konsol, år/årtionde, ljudchip och kompositör, sortera efter
+  titel, år eller senast tillagt, och sök i album, kompositörer, konsoler och spår.
+  "Play all" och "Shuffle" spelar allt som visas; för en kompositör bara deras egna spår.
+- **Album:** spårlista med uppspelning, eget omslag ("Change cover…"), redigering av
+  `album.toml` (valideras innan den sparas), "Regenerate…", titelkarta och "Export !tags.m3u".
+- **Playlists:** se [Kö och spellistor](#kö-och-spellistor).
 - **joshw:** se [joshw.info](#joshwinfo).
 - **Catalog:** dolda dubbletter, album med samma spelnyckel och spelnycklar per album.
 
 Spelaren längst ner spelar i webbläsaren eller på en apparat i nätet. Play på en låt köar
-resten av albumet.
+resten av albumet. Mellanslag pausar och spelar.
+
+**Omslag:** en uppladdad bild (JPEG/PNG) sparas i `/meta` bredvid album.toml
+(`cover.jpg`, eller `<fil>.cover.jpg` för album i en enda fil) och går före rippens egen.
+"Remove" tar bort den uppladdade bilden.
+
+## Kö och spellistor
+
+- **Kön** (☰ i spelaren) visar vad som spelas och vad som kommer. Dra för att ändra ordning,
+  ✕ tar bort, klick hoppar dit. "Clear" behåller bara låten som spelas. Kön sparas i
+  webbläsaren och finns kvar efter omladdning.
+- **⋯ / ▶ på omslag:** "Play next", "Add to queue", "Add to playlist…" finns på varje låt,
+  album, sökresultat och filtrerad vy. ▶ på ett omslag spelar albumet direkt.
+- **🔀** blandar resten av kön (låten som spelas står kvar). **🔁** växlar mellan av, hela
+  kön och 🔂 en låt.
+- Spelas kön på en TV eller högtalare skickas ändringar dit utan att låten som spelas börjar
+  om. Byter du från webbläsaren till en apparat medan något spelar, flyttas musiken dit.
+- **Spellistor** sparas som en JSON-fil var i `/meta/_playlists/`. Varje rad har låtens id
+  och dess sökväg, så en flyttad fil hittas igen; filer som försvunnit visas som "missing"
+  men ligger kvar i listan. Samma spellistor syns i Subsonic-appar.
 
 ## Spela på TV och högtalare
 
@@ -190,7 +213,8 @@ Kräver `[joshw] enabled = true` och skrivbar `/library/_synced` (ägd av 568:56
 
 Under `/rest/` finns ett OpenSubsonic-API (JSON) som Subsonic-appar och Music Assistants
 OpenSubsonic-källa kan använda: artist = kompositör, genre = konsol, album och låtar som
-ovan, strömmat som WAV med exakt längd. Användare och lösenord under `[subsonic]`.
+ovan, strömmat som WAV med exakt längd, och samma spellistor som i webbgränssnittet
+(läsa, skapa, ändra, ta bort). Användare och lösenord under `[subsonic]`.
 Biblioteket indexeras vid start och var `rescan_minutes`.
 
 ## HTTP-API
@@ -219,7 +243,12 @@ python3 tests/test_txtp_titles.py
 python3 tests/test_jaudio.py
 python3 tests/test_outputs.py
 python3 tests/test_updates.py
+python3 tests/test_library.py
 ```
+
+`/api/engines` och `/api/song/<id>/engine` beskriver vad varje motor kan visa och styra:
+`insight` (sequence, pattern, voices, registers eller audio), röst-/kanalnamn och reglage.
+Det är grunden för kommande visualisering och motorreglage.
 
 Lokalt utan Docker (kräver libgme/libopenmpt för de motorerna):
 

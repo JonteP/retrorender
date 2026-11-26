@@ -5,9 +5,21 @@ Routes (all require HTTP Basic auth with the [web] or [subsonic] credentials):
   GET  /api/status                version, engines, index and catalog stats
   GET  /api/platforms             consoles with album/song counts
   GET  /api/artists               composers with album counts
-  GET  /api/albums?platform=&artist=&q=
+  GET  /api/facets                consoles, composers, years and sound chips with counts
+  GET  /api/albums?platform=&artist=&year=&chip=&q=&sort=name|year|added|platform
+  GET  /api/tracks?…              every track matching the same filters, or album=/playlist=
+                                  (for "play all"), in album and track order
   GET  /api/album/<id>            album details, tracks, album.toml text
   GET  /api/cover/<album id>      cover image
+  POST /api/album/<id>/cover      upload a cover (body = JPEG or PNG), stored in /meta
+  POST /api/album/<id>/cover/delete  remove an uploaded cover
+  GET  /api/engines               what each engine can show and control (see Engine.describe)
+  GET  /api/song/<id>/engine      the same for one track (voice names etc.)
+  GET  /api/playlists             playlists (without songs)
+  POST /api/playlists             create {name, songs: [song id], comment}
+  GET  /api/playlist/<id>         one playlist with its tracks
+  POST /api/playlist/<id>         change {name?, songs?, add?, remove_at?, comment?}
+  POST /api/playlist/<id>/delete  remove it
   GET  /api/catalog               identical files, hidden duplicates, editions
   GET  /api/regenerate-all?path=  preview of a forced regeneration (no changes)
   POST /api/album/<id>/toml       save album.toml (body = TOML text, validated)
@@ -38,8 +50,11 @@ PAGE = Path(__file__).parent / "web" / "index.html"
 
 
 class WebUI:
-    def __init__(self, cfg: dict, lib, meta, cat, status_fn, probe, joshw=None):
+    def __init__(self, cfg: dict, lib, meta, cat, status_fn, probe, joshw=None,
+                 playlists=None, registry=None):
         self.cfg = cfg
+        self.playlists = playlists
+        self.registry = registry
         self.lib = lib
         self.meta = meta
         self.cat = cat
@@ -92,8 +107,19 @@ class WebUI:
             return h._json(self.platforms()) or True
         if name == "artists":
             return h._json(self.artists()) or True
+        if name == "facets":
+            return h._json(self.facets()) or True
         if name == "albums":
             return h._json(self.albums(q)) or True
+        if name == "tracks":
+            return h._json(*self.tracks(q)) or True
+        if name == "engines":
+            return h._json([e.describe() for e in self.registry.engines]
+                           if self.registry else []) or True
+        if name == "song" and len(parts) >= 3 and parts[2] == "engine":
+            return h._json(*self.song_engine(parts[1])) or True
+        if name in ("playlists", "playlist"):
+            return h._json(*self._playlists(h, parts, post)) or True
         if name == "album" and len(parts) >= 2:
             al = self.lib.index.albums.get(parts[1])
             if al is None:
@@ -109,6 +135,10 @@ class WebUI:
                 return h._json(*self.save_titles(al, h)) or True
             if action == "regenerate" and post:
                 return h._json(self.regenerate(al)) or True
+            if action == "cover" and post:
+                if len(parts) > 3 and parts[3] == "delete":
+                    return h._json(*self.delete_cover(al)) or True
+                return h._json(*self.save_cover(al, h)) or True
         if name == "cover" and len(parts) >= 2:
             return self._cover(h, parts[1])
         if name == "catalog":
@@ -144,10 +174,16 @@ class WebUI:
                 from urllib.parse import unquote
                 dev, action = unquote(parts[0]), parts[1]
                 if action == "play":
-                    return h._json(out.play(dev, body.get("songs", []), int(body.get("start", 0)))) or True
+                    return h._json(out.play(dev, body.get("songs", []), int(body.get("start", 0)),
+                                            str(body.get("repeat", "off")))) or True
+                if action == "queue":
+                    return h._json(out.queue(dev, body.get("songs", []),
+                                             int(body.get("index", 0)))) or True
                 return h._json(out.control(dev, action, body.get("value"))) or True
         except KeyError as e:
             return h._json({"error": str(e)}, 404) or True
+        except ValueError as e:
+            return h._json({"error": str(e)}, 400) or True
         except Exception as e:      # noqa: BLE001 - device errors go back to the page
             return h._json({"error": str(e)}, 502) or True
         return h._json({"error": "unknown outputs route"}, 404) or True
@@ -169,7 +205,19 @@ class WebUI:
                 "artists": [{"id": i, "name": n} for i, n in al.artists],
                 "songs": len(al.songs),
                 "duration": int(sum(ix.songs[s].duration for s in al.songs if s in ix.songs)),
-                "cover": bool(al.cover), "region": al.region}
+                "cover": bool(al.cover), "region": al.region, "chips": al.chips,
+                "added": al.created}
+
+    def song_brief(self, s) -> dict:
+        """A track as the player needs it: enough to show it in a queue and play it."""
+        al = self.lib.index.albums.get(s.album_id)
+        return {"id": s.id, "track": s.track, "title": s.title, "artist": s.artist,
+                "artists": [{"id": i, "name": n} for i, n in s.artists],
+                "album": al.name if al else "", "album_id": s.album_id,
+                "platform": s.platform, "cover": bool(al and al.cover),
+                "duration": round(s.duration, 1), "engine": s.engine,
+                "file": s.rel, "sub": s.sub,
+                "render": f"/render?path={quote(s.rel)}&sub={s.sub}"}
 
     def platforms(self) -> list:
         ix = self.lib.index
@@ -184,13 +232,39 @@ class WebUI:
         return sorted(({"id": a.id, "name": a.name, "albums": len(a.albums)}
                        for a in ix.artists.values()), key=lambda x: x["name"].lower())
 
-    def albums(self, q: dict) -> dict:
+    def facets(self) -> dict:
+        """Everything the library can be browsed by, with album counts."""
+        years: dict[int, int] = {}
+        chips: dict[str, int] = {}
+        for a in self.lib.index.albums.values():
+            if a.year:
+                years[a.year] = years.get(a.year, 0) + 1
+            for c in set(a.chips):
+                chips[c] = chips.get(c, 0) + 1
+        return {"platforms": self.platforms(), "artists": self.artists(),
+                "years": [{"year": y, "albums": n} for y, n in sorted(years.items())],
+                "chips": [{"name": c, "albums": n}
+                          for c, n in sorted(chips.items(), key=lambda x: x[0].lower())]}
+
+    def _filtered(self, q: dict) -> tuple[list, list]:
+        """(albums, matching songs) for the library filters."""
         ix = self.lib.index
         als = list(ix.albums.values())
         if q.get("platform"):
             als = [a for a in als if a.platform == q["platform"]]
         if q.get("artist"):
-            als = [a for a in als if any(i == q["artist"] for i, _ in a.artists)]
+            als = [a for a in als if any(i == q["artist"] for i, _ in a.artists)
+                   or any(any(i == q["artist"] for i, _ in ix.songs[s].artists)
+                          for s in a.songs if s in ix.songs)]
+        if q.get("year"):
+            y = q["year"]
+            if y.endswith("s") and y[:-1].isdigit():          # a decade: "1990s"
+                d = int(y[:-1])
+                als = [a for a in als if a.year and d <= a.year < d + 10]
+            elif y.isdigit():
+                als = [a for a in als if a.year == int(y)]
+        if q.get("chip"):
+            als = [a for a in als if q["chip"] in a.chips]
         term = q.get("q", "").strip().lower()
         songs = []
         if term:
@@ -199,14 +273,112 @@ class WebUI:
             match = [a for a in als if hit(a.name) or hit(a.artist) or hit(a.platform)]
             ids = {a.id for a in als}
             songs = [s for s in ix.songs.values()
-                     if s.album_id in ids and (hit(s.title) or hit(s.artist))][:200]
-            als = match + [ix.albums[i] for i in {s.album_id for s in songs}
+                     if s.album_id in ids and (hit(s.title) or hit(s.artist))]
+            als = match + [ix.albums[i] for i in dict.fromkeys(s.album_id for s in songs)
                            if ix.albums[i] not in match]
-        als.sort(key=lambda a: (a.platform.lower(), a.name.lower()))
+        key = {"year": lambda a: (a.year or 9999, a.name.lower()),
+               "added": lambda a: a.created,
+               "name": lambda a: a.name.lower()}.get(q.get("sort", ""),
+                                                    lambda a: (a.platform.lower(), a.name.lower()))
+        als.sort(key=key, reverse=q.get("sort") == "added")
+        return als, songs
+
+    def albums(self, q: dict) -> dict:
+        ix = self.lib.index
+        als, songs = self._filtered(q)
         return {"albums": [self._album_brief(a) for a in als],
-                "songs": [{"id": s.id, "title": s.title, "artist": s.artist,
-                           "album_id": s.album_id,
-                           "album": ix.albums[s.album_id].name} for s in songs]}
+                "songs": [self.song_brief(s) for s in songs[:200]]}
+
+    MAX_TRACKS = 5000
+
+    def tracks(self, q: dict):
+        """Every track for "play all": an album, a playlist, or the library filters.
+        With a search term, the matching tracks come first, then the rest of the
+        matching albums."""
+        ix = self.lib.index
+        if q.get("playlist"):
+            try:
+                pl = self.playlists.get(q["playlist"])
+            except (KeyError, AttributeError):
+                return {"error": "no such playlist"}, 404
+            songs = self.playlists.resolve(pl["songs"])
+        elif q.get("album"):
+            al = ix.albums.get(q["album"])
+            if al is None:
+                return {"error": "album not found"}, 404
+            songs = [ix.songs[i] for i in al.songs if i in ix.songs]
+        else:
+            als, hits = self._filtered(q)
+            songs = list(hits) if q.get("q") else []
+            seen = {s.id for s in songs}
+            if q.get("artist") and not q.get("q"):
+                # a composer: their own tracks, not every track of a shared album
+                aid = q["artist"]
+                songs = [ix.songs[i] for a in als for i in a.songs if i in ix.songs
+                         and any(x == aid for x, _ in ix.songs[i].artists)]
+            elif not q.get("q") or q.get("whole_albums"):
+                songs += [ix.songs[i] for a in als for i in a.songs
+                          if i in ix.songs and i not in seen]
+        total = len(songs)
+        return {"total": total, "songs": [self.song_brief(s) for s in songs[:self.MAX_TRACKS]]}, 200
+
+    def song_engine(self, sid: str):
+        s = self.lib.index.songs.get(sid)
+        if s is None:
+            return {"error": "song not found"}, 404
+        f = self.lib.root / s.rel
+        try:
+            eng, tracks = self.probe(f)
+            t = next((x for x in tracks if x.index == s.sub), None)
+            return eng.describe(f, t), 200
+        except Exception as e:      # noqa: BLE001 - shown on the page
+            return {"error": str(e)}, 500
+
+    # --- playlists -----------------------------------------------------------------------
+    def _playlist_brief(self, pl: dict) -> dict:
+        songs = self.playlists.resolve(pl["songs"])
+        covers = list(dict.fromkeys(s.album_id for s in songs
+                                    if self.lib.index.albums.get(s.album_id)
+                                    and self.lib.index.albums[s.album_id].cover))[:4]
+        return {"id": pl["id"], "name": pl["name"], "comment": pl.get("comment", ""),
+                "created": pl.get("created"), "changed": pl.get("changed"),
+                "songs": len(songs), "missing": len(pl["songs"]) - len(songs),
+                "duration": int(sum(s.duration for s in songs)), "covers": covers}
+
+    def _playlists(self, h, parts, post):
+        st = self.playlists
+        if st is None or not st.dir:
+            return {"error": "playlists need a meta folder"}, 503
+        try:
+            if parts[0] == "playlists":
+                if post:
+                    b = json.loads(self._body(h) or "{}")
+                    pl = st.create(str(b.get("name", "")), list(b.get("songs", [])),
+                                   str(b.get("comment", "")))
+                    return self._playlist_brief(pl), 200
+                return {"writable": st.writable,
+                        "playlists": [self._playlist_brief(p) for p in st.list()]}, 200
+            pid = parts[1] if len(parts) > 1 else ""
+            if len(parts) > 2 and parts[2] == "delete" and post:
+                st.delete(pid)
+                return {"ok": True}, 200
+            if post:
+                b = json.loads(self._body(h) or "{}")
+                pl = st.update(pid, name=b.get("name"), song_ids=b.get("songs"),
+                               add=b.get("add", []), remove_at=b.get("remove_at", []),
+                               comment=b.get("comment"))
+            else:
+                pl = st.get(pid)
+            d = self._playlist_brief(pl)
+            d["tracks"] = [self.song_brief(s) for s in st.resolve(pl["songs"])]
+            d["writable"] = st.writable
+            return d, 200
+        except KeyError:
+            return {"error": "no such playlist"}, 404
+        except PermissionError as e:
+            return {"error": str(e)}, 403
+        except ValueError as e:
+            return {"error": f"bad request: {e}"}, 400
 
     def album(self, al) -> dict:
         ix = self.lib.index
@@ -215,10 +387,7 @@ class WebUI:
             s = ix.songs.get(sid)
             if not s:
                 continue
-            tracks.append({"id": s.id, "track": s.track, "title": s.title, "artist": s.artist,
-                           "duration": round(s.duration, 1), "engine": s.engine,
-                           "file": s.rel, "sub": s.sub,
-                           "render": f"/render?path={quote(s.rel)}&sub={s.sub}"})
+            tracks.append(self.song_brief(s))
         toml_text, state = "", "missing"
         p = self.meta.path_for(al.key) if self.meta.enabled else None
         if p and p.is_file():
@@ -233,7 +402,8 @@ class WebUI:
             titles_text = tp.read_text("utf-8")
         d = self._album_brief(al)
         d.update(titles=titles_text, titles_builtin=builtin, titles_template=self._titles_template(al),
-                 tracks=tracks, key=al.key, game_key=al.game_key, chips=al.chips,
+                 tracks=tracks, key=al.key, game_key=al.game_key,
+                 cover_uploaded=bool(self.lib.uploaded_cover(al.key)),
                  toml=toml_text, toml_state=state, toml_path=str(p) if p else None,
                  writable=self.meta.writable)
         return d
@@ -246,14 +416,57 @@ class WebUI:
             h.end_headers()
             return True
         p = Path(al.cover)
+        st = p.stat()
+        etag = f'"{int(st.st_mtime)}-{st.st_size}"'
+        if h.headers.get("If-None-Match") == etag:      # a changed cover shows up at once
+            h.send_response(304)
+            h.send_header("ETag", etag)
+            h.end_headers()
+            return True
         data = p.read_bytes()
         h.send_response(200)
         h.send_header("Content-Type", "image/png" if p.suffix.lower() == ".png" else "image/jpeg")
         h.send_header("Content-Length", str(len(data)))
-        h.send_header("Cache-Control", "max-age=3600")
+        h.send_header("Cache-Control", "no-cache")
+        h.send_header("ETag", etag)
         h.end_headers()
         h.wfile.write(data)
         return True
+
+    MAX_COVER = 8 * 1024 * 1024
+
+    def save_cover(self, al, h):
+        """The uploaded image goes to /meta next to album.toml and wins over the rip's own."""
+        if not self.meta.writable:
+            return {"error": "the meta folder is not writable"}, 403
+        n = int(h.headers.get("Content-Length") or 0)
+        if not 0 < n <= self.MAX_COVER:
+            return {"error": "send a JPEG or PNG image of at most 8 MB"}, 413
+        data = h.rfile.read(n)
+        ext = ("png" if data[:8] == b"\x89PNG\r\n\x1a\n"
+               else "jpg" if data[:3] == b"\xff\xd8\xff" else None)
+        if ext is None:
+            return {"error": "only JPEG and PNG images are supported"}, 415
+        self.delete_cover(al)
+        p = self.lib.cover_target(al.key, ext)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_bytes(data)
+        tmp.replace(p)
+        al.cover = str(p)
+        log.info("cover for %s saved to %s", al.name, p)
+        return {"ok": True}, 200
+
+    def delete_cover(self, al):
+        if not self.meta.writable:
+            return {"error": "the meta folder is not writable"}, 403
+        old = self.lib.uploaded_cover(al.key)
+        if old:
+            Path(old).unlink(missing_ok=True)
+            if al.cover == old:
+                al.cover = None
+            threading.Thread(target=self.lib.scan, daemon=True).start()
+        return {"ok": True}, 200
 
     def tags_m3u(self, al) -> tuple[str, str | None]:
         """(text, error). One line per file, so albums made of subtunes in one file don't fit."""
