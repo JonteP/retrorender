@@ -34,6 +34,8 @@ packade i `Seqs/JaiSeqs.arc` och instrumentbankerna i `JaiInit.aaf` (samplingar 
 `Banks/*.aw`). Arkivet blir ett album med en låt per sekvens, t.ex.
 "Legend of Zelda, The - The Wind Waker (sequenced)". Sekvenser utan toner (ljudeffekter)
 döljs. Första genomsökningen av arkivet tar runt en minut; resultatet sparas i katalogen.
+Ekot är spelets eget (FX-scen 0 ur `JaiInit.aaf`); mängden styrs som för Galaxy av
+`jaudio_fx_send`.
 
 ## Sekvenserad Nintendo-musik, BMS (nytt i v0.10)
 
