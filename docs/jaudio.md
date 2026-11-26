@@ -66,3 +66,25 @@ Voices update every DSP subframe (80 samples at 32 kHz).
 - FX (reverb/echo) comes from `AudEffector::mFxLine`: four lines, 64-subframe buffers,
   returned to left/right at 0x7000, filter `{0, 0x1000, 0, 0, 0, 0, 0x3FFF, 0}`. The send
   amount is set per level by the game, not by the sequence.
+
+## JAudio 1 (Wind Waker) differences
+Source: zeldaret/tww `libs/JSystem/src/JAudio` (JASystem::TSeqParser, TTrack, BNKParser).
+- Files: `JaiInit.aaf` is a list of u32 records: type 1 sound table, type 2 banks and
+  type 3 wave systems (each `offset, size, x` triples ending in 0; for banks x is the wave
+  system index), 5 stream list, 6 SE scenes, 7 FX scenes, 0 end. Sequences are packed in a
+  RARC archive (`JaiSeqs.arc`). The bank number a sequence uses is the IBNK id at +8.
+- Banks are IBNK with a `BANK` block at +0x20: 128 instrument offsets at +0x24, 12
+  percussion sets at +0x3B4 (programs 0xE4–0xEF). `INST`: volume, pitch, 2 oscillators,
+  2 random and 2 sense effects, key regions with velocity regions (high velocity, wave id,
+  volume, pitch). `PERC`/`PER2`: 128 key maps, PER2 adds pan and release per key.
+- Sequence encoding:
+  - `0x00–0x7F` note: flag byte (bit7 key from register, bits 5–6 tie/sweep, bits 3–4
+    number of duration bytes, bits 0–2 voice id), velocity, and for voice 0 a gate
+    percentage and the duration. Duration 0 waits for the note to end.
+  - `0x80` / `0x88` wait (1/2 bytes), `0x81–0x8F` and `0xF9` note-off (bit 3 = release byte).
+  - `0x90–0x9F` timed parameter (value and time encodings in the low bits),
+    `0xA0–0xAF` register arithmetic, `0xB0–0xBF` command with register arguments.
+  - `0xC0–0xFF` commands, e.g. C1 open track, C4 call, C6 return, C8 jump (flag byte:
+    condition in low nibble, bit 7 = register/table target), C9/CA loop, DF interrupt,
+    FD tempo, FE timebase, FF finish.
+- Bend: semitones = pitch parameter × 4 × bend sense (register 7, default 12).

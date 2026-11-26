@@ -14,7 +14,7 @@ from pathlib import Path
 log = logging.getLogger("subsonic")
 
 API_VERSION = "1.16.1"
-SERVER_VERSION = "0.10"
+SERVER_VERSION = "0.11"
 
 
 class SubsonicError(Exception):

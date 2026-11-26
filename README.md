@@ -27,6 +27,14 @@ Containern läser biblioteket skrivskyddat och kör som användaren `apps` (568)
 
 `/health` och webbgränssnittet (uppe till höger, och under Overview → Build) visar versionsnumret plus den commit imagen byggdes från. Den ska stämma med senaste commit på `main` på GitHub (de sju första tecknen). Visar den ett äldre värde är imagen inte uppdaterad. Vänta tills Actions-bygget är klart och starta om appen igen.
 
+## Wind Waker och JAudio 1 (nytt i v0.11)
+
+Motorn klarar nu även den äldre JAudio-versionen (The Wind Waker). Där ligger sekvenserna
+packade i `Seqs/JaiSeqs.arc` och instrumentbankerna i `JaiInit.aaf` (samplingar i
+`Banks/*.aw`). Arkivet blir ett album med en låt per sekvens, t.ex.
+"Legend of Zelda, The - The Wind Waker (sequenced)". Sekvenser utan toner (ljudeffekter)
+döljs. Första genomsökningen av arkivet tar runt en minut; resultatet sparas i katalogen.
+
 ## Sekvenserad Nintendo-musik, BMS (nytt i v0.10)
 
 Egen motor (`jaudio`) för JAudio2-musik från GameCube/Wii, t.ex. Super Mario Galaxy:
@@ -42,7 +50,7 @@ dekompilerade spelen (Twilight Princess, Galaxy). Formatnoteringar finns i `docs
 - `jaudio_fx_send` under `[engines]` styr mängden eko (spelet sätter den per bana); 0 = torrt.
 - Loopar hittas exakt i sekvensen (intro + loop), så looppolicyn fungerar som för andra format.
 
-Ej ännu: vibrato/tremolo, IIR/FIR-filter, JAudio 1 (Wind Waker).
+Ej ännu: vibrato/tremolo, IIR/FIR-filter.
 
 ## TXTP och titelkartor (nytt i v0.9)
 
