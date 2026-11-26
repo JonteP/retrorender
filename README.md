@@ -70,16 +70,10 @@ igenom). Med `pull_policy: always` hämtas den när appen startas om.
 
 Versionen syns i webbgränssnittet (uppe till höger, och Overview → Build) och i `/health`:
 versionsnummer plus commit. Commit ska stämma med senaste commit på `main` (sju första
-tecknen). Visar den ett äldre värde är bygget inte klart än.
+tecknen). Visar den ett äldre värde är bygget inte klart än; vänta och starta om igen.
 
-Automatisk uppdatering kan ordnas med ett Cron Job i TrueNAS (System → Advanced → Cron Jobs),
-t.ex. varje natt 04:00, som drar ny image och startar om appen:
-
-```
-midclt call app.pull_images retrorender '{"redeploy": true}'
-```
-
-Prova kommandot i skalet först; anropets namn kan skilja mellan TrueNAS-versioner.
+När GitHub har byggt en nyare image än den som körs visas **Update ready** uppe till höger i
+webbgränssnittet (kollas var femte minut, `[updates]` i config.toml). Starta då om appen.
 
 ## Webbgränssnittet
 
@@ -224,6 +218,7 @@ kör testerna på varje PR och vid push till `main`, och bygger imagen när de g
 python3 tests/test_txtp_titles.py
 python3 tests/test_jaudio.py
 python3 tests/test_outputs.py
+python3 tests/test_updates.py
 ```
 
 Lokalt utan Docker (kräver libgme/libopenmpt för de motorerna):

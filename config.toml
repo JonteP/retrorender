@@ -97,3 +97,9 @@ rediscover_minutes = 10
 # base_url = "http://192.168.1.126:8090"
 # Stream format: "auto" (FLAC where supported, else WAV/MP3), "flac", "wav" or "mp3".
 format = "auto"
+
+[updates]
+# Show "Update ready" in the web UI when GitHub has built a newer image than the one
+# running (asks the GitHub API every few minutes; restart the app to update).
+check = true
+interval_minutes = 5

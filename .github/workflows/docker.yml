@@ -34,6 +34,7 @@ jobs:
           python tests/test_txtp_titles.py
           python tests/test_jaudio.py
           python tests/test_outputs.py
+          python tests/test_updates.py
       - name: Compile all modules
         run: python -m compileall -q app tests
 
