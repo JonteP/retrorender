@@ -439,6 +439,19 @@ function startLocal() {
   a.src = t.render; a.play().catch(() => {});
   setNow(t);
 }
+// a track that cannot start: ask the server why instead of skipping on in silence
+$("#audio").addEventListener("error", async () => {
+  const t = queue[qi];
+  if (isRemote() || !t || !$("#audio").src) return;
+  let msg = "could not be played";
+  try {
+    const ctl = new AbortController();
+    const r = await fetch(t.render, { signal: ctl.signal });
+    if (!r.ok) msg = (await r.json().catch(() => ({}))).error || msg;
+    ctl.abort();
+  } catch (e) { /* aborted or offline */ }
+  toast(`“${t.title}”: ${msg}`, true);
+});
 $("#audio").addEventListener("ended", () => {
   if (isRemote()) return;
   if (repeat === "one") { const a = $("#audio"); a.currentTime = 0; return a.play().catch(() => {}); }

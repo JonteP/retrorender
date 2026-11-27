@@ -18,6 +18,7 @@ GET /rest/...                           Subsonic API (Music Assistant, Subsonic 
 """
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import os
@@ -43,7 +44,7 @@ from policy import plan, settings_for, shape
 from subsonic import Subsonic
 from web import WebUI
 
-VERSION = "0.17.0"
+VERSION = "0.17.1"
 BUILD = {"commit": os.environ.get("RETRO_BUILD_COMMIT", "local")[:7],
          "date": os.environ.get("RETRO_BUILD_DATE", "")}
 
@@ -315,10 +316,14 @@ class Handler(BaseHTTPRequestHandler):
         JOSHW.played(str(p.relative_to(LIBRARY)))
         pl = plan(t, s)
         frames = int(pl.seconds * SAMPLE_RATE)
-        pcm = shape(eng.render(p, t, frames), frames, int(pl.fade_s * SAMPLE_RATE))
-        title = (t.title or p.stem).encode("ascii", "replace").decode()
-
         fmt = q.get("fmt", "wav")
+        title = (t.title or p.stem).encode("ascii", "replace").decode()
+        if not head:
+            # start the engine before any header goes out, so that a failure (missing BIOS,
+            # a broken rip ...) becomes an error response and not an empty stream
+            chunks = iter(eng.render(p, t, frames))
+            first = next(chunks, b"")
+            pcm = shape(itertools.chain([first], chunks), frames, int(pl.fade_s * SAMPLE_RATE))
         if head:
             self.send_response(200)
             self.send_header("Content-Type", {"flac": "audio/flac", "mp3": "audio/mpeg"}.get(fmt, "audio/wav"))
