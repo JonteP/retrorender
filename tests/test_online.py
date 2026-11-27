@@ -49,7 +49,7 @@ settings = Settings(meta, True)
 cat = Catalog(meta / "catalog.sqlite")
 o = Online({"joshw": {"enabled": False, "delay_s": 0}}, cat, lib, on_change=lambda: changes.append(1),
            settings=settings, worker=False)
-o._get = fake_get
+o._http = fake_get
 assert not o.enabled and o.active() == []
 settings.update("online", {"sources": {"joshw": {"enabled": True, "systems": ["nsf"]}},
                            "temp_limit_gb": 0.001})      # ~1 MB: room for one download
@@ -65,25 +65,40 @@ assert o.counts()["platforms"] == {"Nintendo NES": 3}
 smb3 = o.search(q="Mario")[1][0]["id"]
 mm2 = o.search(q="Mega")[1][0]["id"]
 o.fetch(smb3, pin=False)
-o._fetch(*o.jobs.get()[1:])                # run the queued job here
+o._fetch(*o.fetches.get()[1:])                # run the queued job here
 r = o.get(smb3)
 assert r["state"] == "temporary" and (lib / r["local_dir"] / ".source.json").is_file(), r
 assert changes and o.entry_for(r["local_dir"] + "/Super.nsf") == {"id": smb3, "state": "temporary"}
 assert o.search(not_local=True)[0] == 2
 time.sleep(0.01)
 o.fetch(mm2, pin=False)
-o._fetch(*o.jobs.get()[1:])
+o._fetch(*o.fetches.get()[1:])
 # the cache holds ~1 MB: the older download is removed, the new one stays
 assert o.get(smb3)["state"] == "remote" and not (lib / r["local_dir"]).exists()
 assert o.get(mm2)["state"] == "temporary"
 o.fetch(mm2, pin=True)                      # "Add to library" on a cached one: kept
 assert o.get(mm2)["state"] == "pinned"
 o.fetch(smb3, pin=False)
-o._fetch(*o.jobs.get()[1:])
+o._fetch(*o.fetches.get()[1:])
 assert o.get(mm2)["state"] == "pinned"      # pinned ones are never removed
 o.played(o.get(smb3)["local_dir"] + "/x.nsf")
 assert o.get(smb3)["last_played"] > time.time() - 5
 o.remove(smb3)
 assert o.get(smb3)["state"] == "remote"
 assert [d.name for d, _ in o.synced_dirs()] == ["nsf"]
+# a download asked for while a long list is read goes first, between its pages
+order = []
+real_fetch = o._fetch
+o._fetch = lambda rid, pin: (order.append("download"), real_fetch(rid, pin))
+o._http = lambda url, dest=None: (order.append("page" if dest is None else "file"), fake_get(url, dest))[1]
+o.fetch(o.search(q="Solstice")[1][0]["id"], pin=False)
+o._refresh("joshw", "nsf", force=True)
+assert order[:3] == ["download", "file", "page"], order
+assert o.get(o.search(q="Solstice")[1][0]["id"])["state"] == "temporary"
+# a download that was queued when the app stopped is not stuck after a restart
+rid = o.search(q="Mega")[1][0]["id"]
+o.remove(rid)
+o._exec("UPDATE remote SET state='queued' WHERE id=?", (rid,))
+o2 = Online({"joshw": {"delay_s": 0}}, cat, lib, on_change=lambda: None, settings=settings, worker=False)
+assert o2.get(rid)["state"] == "remote"
 print("online libraries: ok")

@@ -181,7 +181,10 @@ class Online:
         self.root = library_root
         self.synced = library_root / "_synced"
         self.on_change = on_change          # called after downloads (re-index)
-        self.jobs: "queue.Queue[tuple]" = queue.Queue()
+        self.jobs: "queue.Queue[tuple]" = queue.Queue()        # list reads
+        self.fetches: "queue.Queue[tuple]" = queue.Queue()     # downloads: always first
+        self._wake = threading.Event()
+        self._listing = False
         self.current: dict | None = None
         self.log: list[str] = []
         self._last_request = 0.0
@@ -190,6 +193,9 @@ class Online:
         if self.cat.enabled:
             with self.cat._lock:
                 self.cat.db.executescript(SCHEMA)
+                # downloads that were queued or running when the app stopped start over
+                self.cat.db.execute("UPDATE remote SET state='remote', error=NULL"
+                                    " WHERE state IN ('queued', 'downloading')")
                 self.cat.db.commit()
             if worker:
                 threading.Thread(target=self._worker, daemon=True, name="online").start()
@@ -246,29 +252,36 @@ class Online:
 
     # --- HTTP ----------------------------------------------------------------------------------
     def _get(self, url: str, dest: Path | None = None):
+        if dest is None and self._listing:
+            self._run_fetches()             # a download asked for meanwhile goes first
         wait = self.delay - (time.time() - self._last_request)
         if wait > 0:
             time.sleep(wait)
-        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         try:
-            with urllib.request.urlopen(req, timeout=60) as r:
-                if dest is None:
-                    return r.read().decode("utf-8", "replace")
-                total = int(r.headers.get("Content-Length") or 0)
-                done = 0
-                with open(dest, "wb") as fh:
-                    while chunk := r.read(1 << 20):
-                        fh.write(chunk)
-                        done += len(chunk)
-                        if self.current is not None:
-                            self.current.update(done=done, total=total)
-                return None
+            return self._http(url, dest)
         finally:
             self._last_request = time.time()
+
+    def _http(self, url: str, dest: Path | None = None):
+        """A page as text, or a file saved to dest (with progress in self.current)."""
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            if dest is None:
+                return r.read().decode("utf-8", "replace")
+            total = int(r.headers.get("Content-Length") or 0)
+            done = 0
+            with open(dest, "wb") as fh:
+                while chunk := r.read(1 << 20):
+                    fh.write(chunk)
+                    done += len(chunk)
+                    if self.current is not None:
+                        self.current.update(done=done, total=total)
+        return None
 
     # --- remote catalogs ---------------------------------------------------------------------------
     def refresh(self, source: str, system: str, force: bool = False):
         self.jobs.put(("refresh", source, system, force))
+        self._wake.set()
 
     def refresh_all(self, force: bool = False):
         for source, system in self.active():
@@ -281,7 +294,11 @@ class Online:
             return
         self._note(f"reading the {source} {system} list")
         try:
-            entries = self.sources[source].list_system(system, self._get)
+            self._listing = True
+            try:
+                entries = self.sources[source].list_system(system, self._get)
+            finally:
+                self._listing = False
         except Exception as e:      # noqa: BLE001
             # keep the time of the last *successful* read, so a failure is retried soon
             self._exec("INSERT INTO remote_systems VALUES (?, ?, NULL, NULL, ?)"
@@ -321,7 +338,8 @@ class Online:
                 self._pin_after.add(rid)
             return row
         self._exec("UPDATE remote SET state='queued', error=NULL WHERE id=?", (rid,))
-        self.jobs.put(("fetch", rid, pin))
+        self.fetches.put(("fetch", rid, pin))
+        self._wake.set()
         return self.get(rid)
 
     def _fetch(self, rid: int, pin: bool):
@@ -459,16 +477,34 @@ class Online:
         return self._local.get(local)
 
     # --- worker ----------------------------------------------------------------------------------
-    def _worker(self):
+    def _run_fetches(self):
         while True:
-            job = self.jobs.get()
             try:
-                if job[0] == "refresh":
-                    self._refresh(job[1], job[2], job[3])
-                elif job[0] == "fetch":
-                    self._fetch(job[1], job[2])
+                job = self.fetches.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                self._fetch(job[1], job[2])
             except Exception:       # noqa: BLE001
-                log.exception("online job failed: %s", job)
+                log.exception("download failed: %s", job)
+
+    def _worker(self):
+        """One thread, so one request at a time. Downloads go before list reads, also in
+        the middle of reading a long list (a big system takes minutes)."""
+        while True:
+            self._wake.wait(30)
+            self._wake.clear()
+            self._run_fetches()
+            while True:
+                try:
+                    job = self.jobs.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    self._refresh(job[1], job[2], job[3])
+                except Exception:       # noqa: BLE001
+                    log.exception("list read failed: %s", job)
+                self._run_fetches()
 
     def _note(self, msg: str):
         log.info(msg)
@@ -552,7 +588,8 @@ class Online:
     def status(self) -> dict:
         return {"enabled": self.enabled, "writable": self.writable if self.enabled else False,
                 "systems": self.systems_status() if self.cat.enabled else [],
-                "current": self.current, "queued": self.jobs.qsize(), "log": self.log[-15:],
+                "current": self.current, "queued": self.fetches.qsize(),
+                "lists_queued": self.jobs.qsize(), "log": self.log[-15:],
                 "temp_limit_gb": round(self.temp_limit / 1024 ** 3, 1),
                 "cache_gb": round(self.cache_size() / 1024 ** 3, 2) if self.cat.enabled else 0}
 

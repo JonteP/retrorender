@@ -980,7 +980,8 @@ async function playOnline(rid, { pin = false, play = true } = {}) {
     const p = r.progress;
     toast(p ? `${p.phase === "downloading" ? "Downloading" : p.phase === "unpacking" ? "Unpacking" : "Indexing"} “${name}”` +
       (p.phase === "downloading" && p.total ? ` · ${Math.round((100 * p.done) / p.total)}%` : "")
-      : r.online.state === "queued" ? `“${name}” is queued` : `Preparing “${name}”…`);
+      : r.online.state === "queued" ? `“${name}” is next${r.listing ? ` (after: ${r.listing.replace(/^\S+ /, "")})` : ""}`
+      : `Preparing “${name}”…`);
     await new Promise((res) => setTimeout(res, 2000));
     try { r = await api(`online/${rid}`); } catch (e) { /* try again */ }
   }
