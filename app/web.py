@@ -818,7 +818,8 @@ class WebUI:
         d.update(name=r["name"], title=r["title"], tags=r["tags"], url=r["url"],
                  albums=self._albums_under(r["local_dir"]) if r["local_dir"] else [],
                  progress=o.current if o.current and o.current.get("id") == rid else None,
-                 queued=o.jobs.qsize())
+                 queued=o.fetches.qsize(), lists=o.jobs.qsize(),
+                 listing=o.log[-1] if o._listing and o.log else "")
         return h._json(d) or True
 
     def _online_cover(self, h, r) -> bool:
