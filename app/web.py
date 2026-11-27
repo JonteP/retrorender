@@ -178,6 +178,8 @@ class WebUI:
             return h._json({"ok": True}) or True
         if name == "joshw":
             return self._joshw(h, parts[1:], q, post)
+        if name == "online" and len(parts) > 1 and not parts[1].isdigit():
+            return self._joshw(h, parts[1:], q, post)     # status, search, refresh
         if name == "online" and len(parts) > 1:
             return self._online(h, parts[1:], q, post)
         if name == "outputs":
@@ -877,12 +879,16 @@ class WebUI:
             return h._json(j.status()) or True
         if parts[0] == "search":
             total, rows = j.search(q.get("system", ""), q.get("q", ""), q.get("state", ""),
-                                   int(q.get("offset", 0) or 0), min(int(q.get("limit", 100) or 100), 500))
+                                   int(q.get("offset", 0) or 0), min(int(q.get("limit", 100) or 100), 500),
+                                   any_system=bool(q.get("state")), order=q.get("order", "title"))
             local = self._local_titles()
             for r in rows:
                 r["platform"] = j.platform(r["system"], r["source"])
                 r["in_library"] = (r["platform"].lower(), normalize_title(r["title"])) in local
                 r["albums"] = self._albums_under(r["local_dir"]) if r["local_dir"] else []
+                if r["local_dir"] and q.get("sizes"):
+                    from online import _dir_size
+                    r["bytes"] = _dir_size(self.lib.root / r["local_dir"])
             return h._json({"total": total, "rows": rows}) or True
         if parts[0] == "refresh" and post:
             for src, s in j.active():
