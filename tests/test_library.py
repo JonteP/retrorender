@@ -278,4 +278,76 @@ al = rest("getAlbum", id=ww.id)["album"]
 assert [d["title"] for d in al["discTitles"]] == ["Streamed", "Sequenced"]
 assert [x["discNumber"] for x in al["song"]] == [1, 1, 2, 2, 2]
 
-print("library, policy, web API, playlists and Subsonic: ok")
+# --- covers from libretro-thumbnails (no network: a fake GitHub) --------------------------
+import struct  # noqa: E402
+import zlib  # noqa: E402
+from covers import CoverFetcher, Libretro, ShapeCache, norm  # noqa: E402
+from settings import Settings  # noqa: E402
+
+
+def png(w, h):
+    raw = b"".join(b"\0" + bytes([200, 60, 40]) * w for _ in range(h))
+    c = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d))  # noqa: E731
+    return (b"\x89PNG\r\n\x1a\n" + c(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+            + c(b"IDAT", zlib.compress(raw)) + c(b"IEND", b""))
+
+
+TREE = ["Named_Boxarts/Tetris (Japan).png", "Named_Boxarts/Tetris (World) (Rev 1).png",
+        "Named_Boxarts/Tetris (World) (Beta).png", "Named_Titles/Tetris (World) (Rev 1).png",
+        "Named_Boxarts/Kirby's Adventure (USA).png",
+        "Named_Boxarts/Mega Man 2 - Dr. Wily no Nazo (Japan).png"]
+calls = []
+
+
+def fake_http(url, timeout=30):
+    calls.append(url)
+    if url.startswith("https://api.github.com/repos/libretro-thumbnails/Nintendo_-_Game_Boy/"):
+        return json.dumps({"tree": [{"path": p} for p in TREE]}).encode()
+    if url.startswith("https://api.github.com/repos/libretro-thumbnails/Nintendo_-_Nintendo_Entertainment_System/"):
+        return json.dumps({"tree": [{"path": p} for p in TREE[4:]]}).encode()
+    if url.startswith("https://raw.githubusercontent.com/"):
+        return png(40, 60)
+    raise OSError("offline: " + url)
+
+
+assert norm("The Legend of Zelda: The Wind Waker") == norm("Legend of Zelda, The - The Wind Waker (USA)")
+settings = Settings(metadir, True)
+settings.update("covers", {"libretro_systems": {"Game Boy": "Nintendo - Game Boy"}})
+lr = Libretro(None, fake_http)
+c = settings.covers()
+assert [h["name"] for h in lr.search("Game Boy", ["Tetris"], "boxart", c)] == ["Tetris (World) (Rev 1)"]
+assert [h["name"] for h in lr.search("Game Boy", ["Tetris"], "title", c)] == ["Tetris (World) (Rev 1)"]
+assert lr.search("Nintendo NES", ["Mega Man 2"], "boxart", c)[0]["name"].startswith("Mega Man 2 - Dr. Wily")
+assert not lr.known("Nintendo - Game Boy", "Named_Boxarts/../../etc/passwd")
+
+lib.settings = settings
+lib.shaper = ShapeCache(metadir / "_cache" / "covers")
+fetcher = CoverFetcher(lib, settings, fake_http)
+fetcher.run_once()
+tetris = next(a for a in lib.index.albums.values() if a.name == "Tetris")
+kirby = next(a for a in lib.index.albums.values() if a.name == "Kirby's Adventure")
+assert tetris.cover_origin == "libretro" and kirby.cover_origin == "libretro", (tetris.covers, kirby.covers)
+assert fetcher.auto_info(tetris.key)["name"] == "Tetris (World) (Rev 1)"
+assert fetcher.status["found"] >= 2
+n = len(calls)
+fetcher.run_once()                       # nothing new to do: found ones and misses are kept
+assert len(calls) == n, calls[n:]
+settings.update("covers", {"libretro_type": "title"})
+fetcher.run_once()                       # another image type: fetched again
+assert fetcher.auto_info(tetris.key)["type"] == "title"
+settings.update("covers", {"order": ["rip", "libretro"], "enabled": ["rip"]})
+lib.apply_covers(tetris)
+assert tetris.cover is None              # libretro switched off
+settings.update("covers", {"enabled": ["rip", "libretro"], "shape": "pad"})
+lib.apply_covers(tetris)
+try:
+    import PIL  # noqa: F401
+    data, ctype, _ = lib.cover_image(tetris)
+    from PIL import Image
+    assert ctype == "image/jpeg" and Image.open(io.BytesIO(data)).size == (60, 60)
+except ImportError:
+    print("(Pillow missing: square covers not tested)")
+assert lib.cover_image(tetris, original=True)[1] == "image/png"      # the editor gets it as it is
+lib.settings = lib.shaper = None
+
+print("library, policy, web API, playlists, Subsonic and covers: ok")

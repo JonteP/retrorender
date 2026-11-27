@@ -101,15 +101,44 @@ orörd. För delspår i en fil heter nyckeln `namn#2`, t.ex. `"jaiseqs#12" = "Dr
 Spelaren längst ner spelar i webbläsaren eller på en apparat i nätet. Play på en låt köar
 resten av albumet. Mellanslag pausar och spelar.
 
-**Omslag:** "Edit cover…" beskär valfri del av bilden. Med "Square crop" avstängd kan
-beskärningen ha vilken form som helst, och "Pad to a square" visar då hela den beskurna ytan
-med utfyllnad (en suddig kopia av bilden bakom). "Whole image" väljer hela bilden. En
-förhandsvisning visar resultatet. Bilden du väljer sparas oförändrad i `/meta`
-(`cover.source.*`) så att du kan beskära om från den; omslaget som görs av den sparas som
-`cover.jpg` (eller `<fil>.cover.jpg` för album i en enda fil) och går före rippens egen, som
-aldrig ändras. "Remove cover" / "Use the rip's own" tar bort omslaget men behåller din bild;
-"Forget my image" tar bort båda. "Covers: fill / whole image" i biblioteket väljer hur
-icke-kvadratiska omslag visas.
+**Omslag:** varifrån omslagen kommer ställs in under **Settings** (se nedan).
+"Edit cover…" beskär valfri del av en bild. Med "Square crop" avstängd kan beskärningen ha
+vilken form som helst, och "Pad to a square" visar då hela den beskurna ytan med utfyllnad
+(en suddig kopia av bilden bakom). "Whole image" väljer hela bilden, och en förhandsvisning
+visar resultatet. Under bilden finns förslag från libretro-thumbnails (box art, titelskärm,
+skärmbild eller logo, och sök på ett annat namn): "Use as cover" använder bilden direkt,
+"Crop this…" beskär från den. En bild du väljer sparas oförändrad i `/meta`
+(`cover.source.*`) så att du kan beskära om; omslaget du gör sparas som `cover.jpg` (eller
+`<fil>.cover.jpg` för album i en enda fil) och går alltid först. Rippens egen bild ändras
+aldrig. "Remove my cover" tar bort ditt omslag men behåller bilden; "Forget my image" tar
+bort båda.
+
+**Settings:** sidan sparar i `/meta/_settings.toml` (config.toml är skrivskyddad i
+containern). Omslag:
+- Källor i prioritetsordning, med bock för på/av: libretro-thumbnails och rippens egen bild.
+  Ett eget omslag går alltid först.
+- Vilken libretro-bild: box art, titelskärm, skärmbild eller logo.
+- Bilder som inte är kvadratiska: beskär mitten, fyll ut till kvadrat, eller lämna som de
+  är. Gäller hämtade bilder och rippens egna (även till TV och Subsonic-appar; görs med
+  Pillow och sparas i `/meta/_cache/covers`) och är också där omslagsredigeraren startar.
+- Önskad utgåva (USA, World, Europe, Japan …) när ett spel finns i flera.
+- Hämtning sker automatiskt efter varje biblioteksskanning, för album som saknar omslag
+  från en källa högre upp. Hämtade bilder sparas som `cover.auto.*` med `cover.auto.json`
+  (källa och matchat namn). Album där inget hittades försöks igen efter 30 dagar, eller
+  direkt med "Try all again".
+
+libretro-thumbnails matchas på albumets namn mot No-Intro-namnen ("The Legend of Zelda:
+The Wind Waker" = "Legend of Zelda, The - The Wind Waker (USA)", "Castlevania III" =
+"Castlevania III - Dracula's Curse"). Konsolerna översätts till libretros system; för en
+egen konsol, lägg till den i `_settings.toml`:
+
+```toml
+[covers.libretro_systems]
+"Game Boy" = "Nintendo - Game Boy"
+```
+
+Containern behöver nå `api.github.com` (en lista per konsol, sparas en vecka),
+`raw.githubusercontent.com` och `thumbnails.libretro.com`.
 
 **Album i flera delar:** ett spel vars ljud ligger i undermappar, som Wind Wakers `Stream/`
 och `Seqs/` eller Galaxys AST-filer och `Seqs/`, visas som ett album med en del per mapp
