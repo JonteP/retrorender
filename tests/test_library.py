@@ -66,10 +66,15 @@ put("NES/Mega Man 2/02 Wily.fake", [song("Dr. Wily Stage 1", "Takashi Tateishi",
 put("NES/Mega Man 2/03 Ending.fake", [song("Ending", "Manami Matsumae", game="Mega Man 2", length_s=90)])
 put("NES/Kirby.fake", [song(f"Kirby {i}", "Jun Ishikawa & Hirokazu Ando", game="Kirby's Adventure", length_s=20)
                        for i in range(1, 4)])
+# a game with streamed audio and sequences in sub-folders: one album with two parts
+put("GameCube/Wind Waker/Stream/sea.fake", [song("Great Sea", game="Wind Waker", length_s=60)])
+put("GameCube/Wind Waker/Stream/title.fake", [song("Title", game="Wind Waker", length_s=60)])
+put("GameCube/Wind Waker/Seqs/JaiSeqs.fake", [song(f"seq {i}", game="Wind Waker (sequenced)", length_s=30)
+                                              for i in range(3)])
 put("GameBoy/Tetris/tetris.fake", [song("Type A", "Hirokazu Tanaka", game="Tetris"),
                                    song("Type B", "Hirokazu Tanaka", game="Tetris")])
 
-cfg = {"platforms": {"NES": "Nintendo NES", "GameBoy": "Game Boy"},
+cfg = {"platforms": {"NES": "Nintendo NES", "GameBoy": "Game Boy", "GameCube": "Nintendo GameCube"},
        "defaults": {"loops": 2, "min_s": 30, "max_s": 600, "default_s": 120, "fade_s": 8},
        "engine": {"fake": {"fade_s": 5}}}
 meta = MetaStore(metadir, root)
@@ -80,8 +85,15 @@ ix = lib.index
 
 # --- library index ----------------------------------------------------------------------
 names = sorted(a.name for a in ix.albums.values())
-assert names == ["Kirby's Adventure", "Mega Man 2", "Tetris"], names
-assert set(ix.genres) == {"Nintendo NES", "Game Boy"}, ix.genres
+assert names == ["Kirby's Adventure", "Mega Man 2", "Tetris", "Wind Waker"], names
+assert set(ix.genres) == {"Nintendo NES", "Game Boy", "Nintendo GameCube"}, ix.genres
+ww = next(a for a in ix.albums.values() if a.name == "Wind Waker")
+assert [p.label for p in ww.parts] == ["Streamed", "Sequenced"], ww.parts
+assert [(ix.songs[s].disc, ix.songs[s].title) for s in ww.songs] == \
+    [(1, "Great Sea"), (1, "Title"), (2, "seq 0"), (2, "seq 1"), (2, "seq 2")]
+assert ww.key == "dir:GameCube/Wind Waker" and ww.parts[1].key.startswith("file:")
+assert (metadir / "GameCube/Wind Waker/Stream/album.toml").is_file()   # each part keeps its own
+assert (metadir / "GameCube/Wind Waker/Seqs/JaiSeqs.fake.album.toml").is_file()
 mm2 = next(a for a in ix.albums.values() if a.name == "Mega Man 2")
 assert [ix.songs[s].title for s in mm2.songs] == ["Title", "Dr. Wily Stage 1", "Ending"]
 # two composers on the album -> both are album artists; each track keeps its own
@@ -149,7 +161,7 @@ def post(route, body):
 
 
 f = get("/api/facets")
-assert [p["name"] for p in f["platforms"]] == ["Game Boy", "Nintendo NES"]
+assert [p["name"] for p in f["platforms"]] == ["Game Boy", "Nintendo GameCube", "Nintendo NES"]
 assert any(a["name"] == "Takashi Tateishi" for a in f["artists"])
 
 al = get("/api/albums", {"platform": "Nintendo NES", "sort": "name"})["albums"]
@@ -168,6 +180,17 @@ assert [x["title"] for x in get("/api/tracks", {"q": "wily"})["songs"]] == ["Dr.
 d = get(f"/api/song/{mm2.songs[0]}/engine")
 assert d["insight"] == "voices" and d["voices"] == ["Pulse 1", "Pulse 2"], d
 assert get("/api/engines")[0]["engine"] == "fake"
+
+d = get(f"/api/album/{ww.id}")
+assert [x["label"] for x in d["discs"]] == ["Streamed", "Sequenced"]
+assert d["parts"][1]["toml_path"].endswith("Seqs/JaiSeqs.fake.album.toml")
+assert "jaiseqs#0" in d["parts"][1]["titles_template"]
+h = Req()
+web.handle(h, f"/api/album/{ww.id}/tags.m3u", {"part": "0"})
+assert b"sea.fake" in h.wfile.getvalue(), h.out
+h = Req("POST", json.dumps({"title": "Dragon Roost"}).encode())
+web.handle(h, f"/api/song/{ww.songs[3]}/title", {})
+assert '"jaiseqs#1" = "Dragon Roost"' in meta.titles_path(ww.parts[1].key).read_text()
 
 # --- renaming one track: titles.toml + album.toml, which stays untouched -------------------
 from meta import gen_status  # noqa: E402
@@ -233,5 +256,8 @@ assert [e["title"] for e in rest("getPlaylist", id=new)["playlist"]["entry"]] ==
 rest("deletePlaylist", id=new)
 assert rest("getPlaylist", id=new)["status"] == "failed"
 assert rest("getUser")["user"]["playlistRole"] is True
+al = rest("getAlbum", id=ww.id)["album"]
+assert [d["title"] for d in al["discTitles"]] == ["Streamed", "Sequenced"]
+assert [x["discNumber"] for x in al["song"]] == [1, 1, 2, 2, 2]
 
 print("library, policy, web API, playlists and Subsonic: ok")

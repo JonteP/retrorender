@@ -102,7 +102,7 @@ class Subsonic:
         return _clean({
             "id": s.id, "parent": s.album_id, "isDir": False, "title": s.title,
             "album": al.name if al else "", "artist": s.artist, "track": s.track,
-            "discNumber": 1, "coverArt": s.album_id if al and al.cover else None,
+            "discNumber": s.disc, "coverArt": s.album_id if al and al.cover else None,
             "size": s.size, "contentType": "audio/wav", "suffix": "wav",
             "duration": int(round(s.duration)), "bitRate": 1411, "samplingRate": 44100,
             "channelCount": 2, "bitDepth": 16, "path": s.rel, "isVideo": False,
@@ -131,7 +131,8 @@ class Subsonic:
             "artists": arts, "displayArtist": a.artist,
             "playCount": 0, "musicBrainzId": "", "sortName": "", "recordLabels": [],
             "releaseTypes": ["album"], "moods": [], "isCompilation": False,
-            "discTitles": [], "userRating": 0,
+            "discTitles": [{"disc": i, "title": p.label} for i, p in enumerate(a.parts, 1)]
+            if len(a.parts) > 1 else [], "userRating": 0,
         })
         if with_songs:
             d["song"] = [self._song(s) for s in songs]

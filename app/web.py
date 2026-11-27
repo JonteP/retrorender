@@ -10,7 +10,7 @@ Routes (all require HTTP Basic auth with the [web] or [subsonic] credentials):
   GET  /api/tracks?…              every track matching the same filters, or album=/playlist=
                                   (for "play all"), in album and track order
   GET  /api/album/<id>            album details, tracks, album.toml text
-  GET  /api/cover/<album id>      cover image
+  GET  /api/cover/<album id>      cover image (?original=1: the rip's own, not an uploaded one)
   POST /api/album/<id>/cover      upload a cover (body = JPEG or PNG), stored in /meta
   POST /api/album/<id>/cover/delete  remove an uploaded cover
   POST /api/song/<id>/title       rename one track {title}: titles.toml + album.toml
@@ -130,20 +130,24 @@ class WebUI:
             action = parts[2] if len(parts) > 2 else ""
             if action == "" and not post:
                 return h._json(self.album(al)) or True
+            try:          # album.toml, titles and export belong to one part (?part=n)
+                part = self.lib.part_of(al, q.get("part"))
+            except KeyError:
+                return h._json({"error": "no such part"}, 404) or True
             if action == "toml" and post:
-                return h._json(*self.save_toml(al, h)) or True
+                return h._json(*self.save_toml(part, h)) or True
             if action == "tags.m3u" and not post:
-                return self._tags_m3u(h, al)
+                return self._tags_m3u(h, al, part)
             if action == "titles" and post:
-                return h._json(*self.save_titles(al, h)) or True
+                return h._json(*self.save_titles(part, h)) or True
             if action == "regenerate" and post:
-                return h._json(self.regenerate(al)) or True
+                return h._json(self.regenerate(part)) or True
             if action == "cover" and post:
                 if len(parts) > 3 and parts[3] == "delete":
                     return h._json(*self.delete_cover(al)) or True
                 return h._json(*self.save_cover(al, h)) or True
         if name == "cover" and len(parts) >= 2:
-            return self._cover(h, parts[1])
+            return self._cover(h, parts[1], original=bool(q.get("original")))
         if name == "catalog":
             return h._json(self.lib.catalog_report()) or True
         if name == "rescan" and post:
@@ -219,7 +223,7 @@ class WebUI:
                 "album": al.name if al else "", "album_id": s.album_id,
                 "platform": s.platform, "cover": bool(al and al.cover),
                 "duration": round(s.duration, 1), "engine": s.engine,
-                "file": s.rel, "sub": s.sub,
+                "file": s.rel, "sub": s.sub, "disc": s.disc,
                 "render": f"/render?path={quote(s.rel)}&sub={s.sub}"}
 
     def platforms(self) -> list:
@@ -352,14 +356,14 @@ class WebUI:
             return {"error": "bad request"}, 400
         if not title:
             return {"error": "the title is empty"}, 400
-        al = self.lib.index.albums[s.album_id]
         f = self.lib.root / s.rel
         eng, tracks = self.probe(f)
         n = len(tracks)
+        key = self.lib.album_key(f, n)           # the part's own album.toml
         base = base_and_options(f.name)[0]
-        self.meta.set_user_title(al.key, f"{base}#{s.sub}" if n > 1 else base, title)
-        if not self.meta.set_track_title(al.key, f.name, s.sub, n, title):
-            self.lib.ensure_meta(al.key, f, eng, tracks)
+        self.meta.set_user_title(key, f"{base}#{s.sub}" if n > 1 else base, title)
+        if not self.meta.set_track_title(key, f.name, s.sub, n, title):
+            self.lib.ensure_meta(key, f, eng, tracks)
         s.title = title                                 # shows at once; the scan follows
         threading.Thread(target=self.lib.scan, daemon=True).start()
         return {"ok": True, "title": title}, 200
@@ -410,42 +414,47 @@ class WebUI:
         except ValueError as e:
             return {"error": f"bad request: {e}"}, 400
 
-    def album(self, al) -> dict:
-        ix = self.lib.index
-        tracks = []
-        for sid in al.songs:
-            s = ix.songs.get(sid)
-            if not s:
-                continue
-            tracks.append(self.song_brief(s))
+    def part_info(self, al, part) -> dict:
+        """album.toml and titles.toml of one part of an album."""
         toml_text, state = "", "missing"
-        p = self.meta.path_for(al.key) if self.meta.enabled else None
+        p = self.meta.path_for(part.key) if self.meta.enabled else None
         if p and p.is_file():
             toml_text = p.read_text("utf-8")
             ver, untouched = gen_status(toml_text)
             state = "untouched" if untouched else ("edited" if ver is not None else "legacy")
-        titles_text = ""
-        tp = self.meta.titles_path(al.key)
+        tp = self.meta.titles_path(part.key)
         m = re.search(r"Title map: built-in title map (\S+\.toml)", toml_text)
-        builtin = m.group(1) if m else ""
-        if tp and tp.is_file():
-            titles_text = tp.read_text("utf-8")
+        return {"label": part.label, "key": part.key, "songs": len(part.songs),
+                "toml": toml_text, "toml_state": state, "toml_path": str(p) if p else None,
+                "titles": tp.read_text("utf-8") if tp and tp.is_file() else "",
+                "titles_builtin": m.group(1) if m else "",
+                "titles_template": self._titles_template(part)}
+
+    def album(self, al) -> dict:
+        ix = self.lib.index
+        tracks = [self.song_brief(ix.songs[sid]) for sid in al.songs if sid in ix.songs]
+        parts = [self.part_info(al, p) for p in (al.parts or [self.lib.part_of(al)])]
         d = self._album_brief(al)
-        d.update(titles=titles_text, titles_builtin=builtin, titles_template=self._titles_template(al),
-                 tracks=tracks, key=al.key, game_key=al.game_key,
+        d.update(tracks=tracks, key=al.key, game_key=al.game_key, parts=parts,
+                 discs=[{"disc": i, "label": p["label"]} for i, p in enumerate(parts, 1)]
+                 if len(parts) > 1 else [],
                  cover_uploaded=bool(self.lib.uploaded_cover(al.key)),
-                 toml=toml_text, toml_state=state, toml_path=str(p) if p else None,
+                 rip_cover=bool(al.rip_cover),
                  writable=self.meta.writable)
+        d.update({k: parts[0][k] for k in ("toml", "toml_state", "toml_path", "titles",
+                                           "titles_builtin", "titles_template")})
         return d
 
-    def _cover(self, h, album_id: str) -> bool:
+    def _cover(self, h, album_id: str, original: bool = False) -> bool:
+        """The album's cover; original=True leaves out an uploaded one (for the crop tool)."""
         al = self.lib.index.albums.get(album_id)
-        if al is None or not al.cover or not Path(al.cover).is_file():
+        path = al and (al.rip_cover if original else al.cover)
+        if not path or not Path(path).is_file():
             h.send_response(404)
             h.send_header("Content-Length", "0")
             h.end_headers()
             return True
-        p = Path(al.cover)
+        p = Path(path)
         st = p.stat()
         etag = f'"{int(st.st_mtime)}-{st.st_size}"'
         if h.headers.get("If-None-Match") == etag:      # a changed cover shows up at once
@@ -494,14 +503,16 @@ class WebUI:
         if old:
             Path(old).unlink(missing_ok=True)
             if al.cover == old:
-                al.cover = None
+                al.cover = al.rip_cover
             threading.Thread(target=self.lib.scan, daemon=True).start()
         return {"ok": True}, 200
 
-    def tags_m3u(self, al) -> tuple[str, str | None]:
+    def tags_m3u(self, al, part=None) -> tuple[str, str | None]:
         """(text, error). One line per file, so albums made of subtunes in one file don't fit."""
         ix = self.lib.index
-        songs = [ix.songs[sid] for sid in al.songs if sid in ix.songs]
+        part = part or self.lib.part_of(al)
+        songs = sorted((ix.songs[sid] for sid in part.songs if sid in ix.songs),
+                       key=lambda s: (s.track, s.title.lower()))
         if not songs:
             return "", "the album has no tracks"
         if any(s.sub for s in songs) or len({s.rel for s in songs}) != len(songs):
@@ -512,7 +523,7 @@ class WebUI:
         from library import UNKNOWN
         artist = ", ".join(n for _, n in al.artists if n != UNKNOWN) or al.meta_artist
         m = re.search(r"Title map: built-in title map (\S+\.toml)",
-                      self.album(al).get("toml", ""))
+                      self.part_info(al, part).get("toml", ""))
         L = [f"# @album {al.name}"]
         if artist:
             L.append(f"# @artist {artist}")
@@ -530,8 +541,8 @@ class WebUI:
             L.append(Path(so.rel).name)
         return "\n".join(L) + "\n", None
 
-    def _tags_m3u(self, h, al) -> bool:
-        text, err = self.tags_m3u(al)
+    def _tags_m3u(self, h, al, part=None) -> bool:
+        text, err = self.tags_m3u(al, part)
         if err:
             return h._json({"error": err}, 422) or True
         data = text.encode("utf-8")
@@ -603,7 +614,7 @@ class WebUI:
             raw = h.rfile.read(n) if n else b""
         return raw.decode("utf-8", "replace")
 
-    def save_toml(self, al, h):
+    def save_toml(self, part, h):
         if not self.meta.writable:
             return {"error": "the meta folder is not writable"}, 403
         text = self._body(h)
@@ -611,7 +622,7 @@ class WebUI:
             tomllib.loads(text)
         except tomllib.TOMLDecodeError as e:
             return {"error": f"invalid TOML: {e}"}, 422
-        p = self.meta.path_for(al.key)
+        p = self.meta.path_for(part.key)
         if p.is_file():
             ver, untouched = gen_status(p.read_text("utf-8"))
             if not untouched:                      # keep a copy of earlier hand edits
@@ -625,16 +636,16 @@ class WebUI:
         threading.Thread(target=self.lib.scan, daemon=True).start()
         return {"ok": True, "message": "saved; re-indexing"}, 200
 
-    def _titles_template(self, al) -> str:
+    def _titles_template(self, part) -> str:
         from txtp import base_and_options
         ix = self.lib.index
         from meta import _tv
         keys = []
-        for sid in al.songs:
+        for sid in part.songs:
             s = ix.songs.get(sid)
             if s:
                 k = base_and_options(Path(s.rel).name)[0]
-                if al.key.startswith("file:"):
+                if part.key.startswith("file:"):
                     k += f"#{s.sub}"                    # subtunes inside one file
                 if k not in keys:
                     keys.append(k)
@@ -645,7 +656,7 @@ class WebUI:
         lines += [f'{_tv(k)} = ""' for k in keys]
         return "\n".join(lines) + "\n"
 
-    def save_titles(self, al, h):
+    def save_titles(self, part, h):
         if not self.meta.writable:
             return {"error": "the meta folder is not writable"}, 403
         text = self._body(h)
@@ -655,29 +666,29 @@ class WebUI:
             return {"error": f"invalid TOML: {e}"}, 422
         if not isinstance(d.get("titles", {}), dict):
             return {"error": "[titles] must be a table"}, 422
-        tp = self.meta.titles_path(al.key)
+        tp = self.meta.titles_path(part.key)
         tp.parent.mkdir(parents=True, exist_ok=True)
         tmp = tp.with_suffix(".tmp")
         tmp.write_text(text, "utf-8")
         tmp.replace(tp)
-        edited = not self.meta.untouched(al.key) and self.meta.path_for(al.key).is_file()
+        edited = not self.meta.untouched(part.key) and self.meta.path_for(part.key).is_file()
         if not edited:
-            f = self.lib.root / al.first_file
+            f = self.lib.root / part.first_file
             eng, tracks = self.probe(f)
-            self.meta.delete(al.key)
-            self.lib.ensure_meta(al.key, f, eng, tracks)
+            self.meta.delete(part.key)
+            self.lib.ensure_meta(part.key, f, eng, tracks)
         threading.Thread(target=self.lib.scan, daemon=True).start()
         msg = ("saved; album.toml is edited by hand, so it was kept — regenerate it to use the titles"
                if edited else "saved; album.toml regenerated, re-indexing")
         return {"ok": True, "edited": edited, "message": msg}, 200
 
-    def regenerate(self, al) -> dict:
+    def regenerate(self, part) -> dict:
         if not self.meta.writable:
             return {"error": "the meta folder is not writable"}
-        f = self.lib.root / al.first_file
+        f = self.lib.root / part.first_file
         eng, tracks = self.probe(f)
-        self.meta.delete(al.key)
-        self.lib.ensure_meta(al.key, f, eng, tracks)
+        self.meta.delete(part.key)
+        self.lib.ensure_meta(part.key, f, eng, tracks)
         threading.Thread(target=self.lib.scan, daemon=True).start()
         return {"ok": True, "message": "regenerated; re-indexing"}
 

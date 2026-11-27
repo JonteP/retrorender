@@ -13,6 +13,7 @@ survive re-indexing.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 import threading
@@ -55,6 +56,7 @@ class Song:
     created: str
     engine: str
     composer: str = ""       # raw composer string before splitting
+    disc: int = 1            # the part of a merged album (see Library._merge_parts)
 
     @property
     def artist(self) -> str:
@@ -63,6 +65,16 @@ class Song:
     @property
     def artist_id(self) -> str:
         return self.artists[0][0]
+
+
+@dataclass
+class Part:
+    """One source of an album: a folder or a file with its own album.toml. A rip with
+    streamed audio in one folder and sequences in another becomes one album with two parts."""
+    key: str
+    label: str
+    first_file: str
+    songs: list = field(default_factory=list)
 
 
 @dataclass
@@ -76,11 +88,13 @@ class Album:
     artists: list = field(default_factory=list)   # [(id, namn)]
     year: int | None = None
     cover: str | None = None          # absolute path to an image
+    rip_cover: str | None = None      # the same, leaving out an uploaded cover
     songs: list[str] = field(default_factory=list)
     region: str = ""
     chips: list = field(default_factory=list)
     game_key: str = ""
     first_file: str = ""
+    parts: list = field(default_factory=list)      # [Part]; one for an ordinary album
 
     @property
     def artist(self) -> str:
@@ -97,6 +111,13 @@ class Artist:
     name: str
     albums: list[str] = field(default_factory=list)
 
+
+# Sub-folders with these names hold one kind of audio for the game in the folder above
+# (e.g. Wind Waker's Stream/ and Seqs/), so they are parts of that album, not albums.
+PART_DIRS = {"stream": "Streamed", "streams": "Streamed", "strm": "Streamed",
+             "seqs": "Sequenced", "seq": "Sequenced", "sequences": "Sequenced",
+             "bms": "Sequenced", "bgm": "", "music": "", "sound": "", "sounds": "", "audio": ""}
+PART_ORDER = {"": 0, "Streamed": 1, "Sequenced": 2}
 
 UNKNOWN = "Unknown composer"
 SEVERAL = "Various composers"
@@ -355,13 +376,105 @@ class Library:
                     num = int(m.group(1)) if m else len(dir_album.songs) + 1
                     self._song(idx, dir_album, f, 0, meta, num)
                 self.count += 1
+        for al in [a for a in albums if not a.songs]:
+            del idx.albums[al.id]
+        albums = [a for a in albums if a.songs]
         for al in albums:
-            if not al.songs:
-                del idx.albums[al.id]
-                continue
-            al.songs.sort(key=lambda sid: (idx.songs[sid].track, idx.songs[sid].title.lower()))
+            al.parts = [Part(al.key, "", al.first_file, list(al.songs))]
+        if self.cfg.get("merge_parts", True):
+            albums = self._merge_parts(idx, pdir, albums)
+        for al in albums:
+            al.songs.sort(key=lambda sid: (idx.songs[sid].disc, idx.songs[sid].track,
+                                           idx.songs[sid].title.lower()))
             self._assign_artists(idx, al)
             idx.genres.setdefault(al.platform, []).append(al.id)
+
+    def group_root(self, d: Path, pdir: Path) -> Path:
+        """The folder whose album a folder of audio belongs to: a synced rip's own folder
+        (the one with .source.json), or the parent of Stream/, Seqs/ and similar."""
+        if d == pdir:
+            return d                                # loose files of a console stay apart
+        for a in [d, *d.parents]:
+            if a == pdir or a == self.root:
+                break
+            if (a / ".source.json").is_file():
+                return a
+        r = d
+        while r.parent != pdir and r.name.lower() in PART_DIRS:
+            r = r.parent
+        return r
+
+    def _merge_parts(self, idx: Index, pdir: Path, albums: list) -> list:
+        groups: dict[Path, list[Album]] = {}
+        for al in albums:
+            d = (self.root / al.first_file).parent
+            groups.setdefault(self.group_root(d, pdir), []).append(al)
+        out = []
+        for root, als in groups.items():
+            if len(als) == 1:
+                out.append(als[0])
+                continue
+            rel = str(root.relative_to(self.root))
+            key = "dir:" + rel
+
+            def label(a):
+                f = self.root / a.first_file
+                sub = f.parent.relative_to(root)
+                if a.key.startswith("file:") and f.parent == root:
+                    return f.stem
+                names = [PART_DIRS.get(x.lower(), x) for x in sub.parts]
+                return " / ".join(n for n in names if n)
+            labels = {a.id: label(a) for a in als}
+            # the rip's own folder next to a Seqs/ folder holds the streamed recordings
+            if "Sequenced" in labels.values():
+                for a in als:
+                    if not labels[a.id] and not any(idx.songs[i].engine == "jaudio" for i in a.songs):
+                        labels[a.id] = "Streamed"
+            als.sort(key=lambda a: (PART_ORDER.get(labels[a.id], 3),
+                                    labels[a.id].lower(), a.first_file.lower()))
+            main = als[0] if als[0].key == key else None
+            gmeta = (self.meta.load(key) if not main and self.meta.enabled else None) or {}
+            galb = gmeta.get("album", {}) or {}
+            name = str(galb.get("title") or "") or (main.name if main else "")
+            if not name:
+                try:
+                    name = json.loads((root / ".source.json").read_text("utf-8")).get("album", "")
+                except (OSError, ValueError):
+                    name = ""
+            if not name:
+                named = [a.name for a in als if a.name.lower() != (self.root / a.first_file).parent.name.lower()]
+                name = re.sub(r"\s*\(sequenced\)$", "", named[0]) if named else root.name
+            years = [a.year for a in als if a.year]
+            merged = Album(_id("al-", key), key, name, als[0].platform,
+                           max(a.created for a in als),
+                           meta_artist=str(galb.get("artist") or "")
+                           or next((a.meta_artist for a in als if a.meta_artist), ""),
+                           year=galb.get("year") if isinstance(galb.get("year"), int)
+                           else (min(years) if years else None),
+                           cover=self._cover(gmeta or None, root, key)
+                           or next((a.cover for a in als if a.cover), None))
+            merged.rip_cover = (self._cover(gmeta or None, root, key, uploaded=False)
+                                or next((a.rip_cover for a in als if a.rip_cover), None))
+            merged.first_file = als[0].first_file
+            for n, a in enumerate(als, 1):
+                idx.albums.pop(a.id, None)
+                merged.parts.append(Part(a.key, labels[a.id] or ("Main" if a is main else a.name),
+                                         a.first_file, list(a.songs)))
+                for sid in a.songs:
+                    idx.songs[sid].album_id = merged.id
+                    idx.songs[sid].disc = n
+                    merged.songs.append(sid)
+            idx.albums[merged.id] = merged
+            out.append(merged)
+        return out
+
+    def part_of(self, al: Album, n: int | str | None = None) -> Part:
+        """One part of an album (0 = the first); ordinary albums have one."""
+        parts = al.parts or [Part(al.key, "", al.first_file, list(al.songs))]
+        try:
+            return parts[int(n or 0)]
+        except (ValueError, IndexError):
+            raise KeyError("no such part")
 
     def _assign_artists(self, idx: Index, al: Album):
         """Album artist = album.toml artist, otherwise the songs' composers."""
@@ -397,9 +510,9 @@ class Library:
                 return str(p)
         return None
 
-    def _cover(self, meta: dict | None, d: Path, key: str) -> str | None:
+    def _cover(self, meta: dict | None, d: Path, key: str, uploaded: bool = True) -> str | None:
         """An uploaded cover first, then album.toml's cover = "…", then the rip's own image."""
-        up = self.uploaded_cover(key)
+        up = self.uploaded_cover(key) if uploaded else None
         if up:
             return up
         meta_dir = self.meta.path_for(key).parent if self.meta.enabled else None
@@ -424,6 +537,7 @@ class Library:
                   meta_artist=str(alb.get("artist") or ""),
                   year=int(year) if isinstance(year, int) else None,
                   cover=self._cover(meta, d, key))
+        a.rip_cover = self._cover(meta, d, key, uploaded=False)
         a.first_file = str(f.relative_to(self.root))
         idx.albums[a.id] = a
         return a
