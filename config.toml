@@ -31,8 +31,9 @@ songlengths = "/library/C64/HVSC/DOCUMENTS/Songlengths.md5"
 # xSF (PSF, PSF2, SSF, DSF, USF, GSF, 2SF) is played by xsfplay. PS1/PS2 need Sony's BIOS:
 # put hebios.bin or a PS2 BIOS dump (4 MB, e.g. SCPH-39001) in <meta_dir>/bios/, or set:
 # psx_bios = "/meta/bios/scph39001.bin"
-# PS1/PS2 DMA timing: "harsh" = like the hardware, "friendly" = for rips that need it
-psx_dma = "harsh"
+# PS1/PS2 DMA timing: "friendly" = what PSF players use and rips are tested with,
+# "harsh" = delayed DMA interrupts as on the hardware (can break rips)
+psx_dma = "friendly"
 # Nintendo DS: DeSmuME's interpreter is exact; its JIT is faster on slow CPUs
 xsf_ds_jit = false
 

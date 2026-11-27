@@ -114,14 +114,14 @@ class XsfEngine(Engine):
 
     def __init__(self, sample_rate: int = 44100, cli: str = "xsfplay", ffmpeg: str = "ffmpeg",
                  bios: Optional[str] = None, meta_dir: Optional[str] = None,
-                 ds_jit: bool = False, psx_dma: str = "harsh"):
+                 ds_jit: bool = False, psx_dma: str = "friendly"):
         self.sample_rate = sample_rate
         self.cli = shutil.which(cli)
         self.ffmpeg = shutil.which(ffmpeg)
         self.bios_setting = bios
         self.bios_dir = Path(meta_dir) / "bios" if meta_dir else None
         self.ds_jit = ds_jit
-        self.psx_dma = psx_dma if psx_dma in ("harsh", "friendly") else "harsh"
+        self.psx_dma = psx_dma if psx_dma in ("harsh", "friendly") else "friendly"
         self._soxr: Optional[bool] = None
 
     def available(self) -> bool:

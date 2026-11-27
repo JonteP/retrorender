@@ -1,11 +1,13 @@
 // xsfplay backend: PS1 / PS2: Highly Experimental
 
 #include "xsfplay.h"
+#include <strings.h>
 
 extern "C" {
 #include "psf2fs.h"
 #include "Core/psx.h"
 #include "Core/iop.h"
+#include "Core/r3000.h"
 #include "Core/bios.h"
 #include "Core/mkhebios.h"
 }
@@ -25,8 +27,30 @@ static std::vector<uint8_t> read_file(const char *path) {
     return d;
 }
 
+// PS-X EXE loading as foo_psf does it: psflib hands over the _lib first, then the minipsf.
+// Every text section goes into RAM, but PC/SP and the region come from the first one (the
+// _lib); a minipsf's own PC is not meant to be used and crashes the CPU.
+struct Psf1Load { void *state; bool first = true; int refresh = 0; };
+
 static int psf1_cb(void *ctx, const uint8_t *exe, size_t exe_size, const uint8_t *, size_t) {
-    return psx_upload_psxexe(ctx, (void *)exe, (uint32_t)exe_size) < 0 ? -1 : 0;
+    Psf1Load *l = (Psf1Load *)ctx;
+    if (exe_size < 0x800 || memcmp(exe, "PS-X EXE", 8)) return -1;
+    uint32_t addr = le32(exe + 0x18) & 0x1FFFFF, size = (uint32_t)(exe_size - 0x800);
+    if (addr < 0x10000 || size > 0x1F0000 || addr + size > 0x200000) return -1;
+    void *iop = psx_get_iop_state(l->state);
+    iop_upload_to_ram(iop, addr, (void *)(exe + 0x800), size);
+    if (!l->refresh) {
+        if (!strncasecmp((const char *)exe + 113, "Japan", 5)) l->refresh = 60;
+        else if (!strncasecmp((const char *)exe + 113, "Europe", 6)) l->refresh = 50;
+        else if (!strncasecmp((const char *)exe + 113, "North America", 13)) l->refresh = 60;
+    }
+    if (l->first) {
+        void *cpu = iop_get_r3000_state(iop);
+        r3000_setreg(cpu, R3000_REG_PC, le32(exe + 0x10));
+        r3000_setreg(cpu, R3000_REG_GEN + 29, le32(exe + 0x30));
+        l->first = false;
+    }
+    return 0;
 }
 
 struct HE : Backend {
@@ -55,8 +79,11 @@ struct HE : Backend {
         state.resize(psx_get_state_size(ver));
         psx_clear_state(state.data(), ver);
         if (ver == 1) {
-            load(path, 1, psf1_cb, state.data());
+            Psf1Load l;
+            l.state = state.data();
+            load(path, 1, psf1_cb, &l);
             if (t.refresh) psx_set_refresh(state.data(), t.refresh);
+            else if (l.refresh) psx_set_refresh(state.data(), l.refresh);
         } else {
             fs = psf2fs_create();
             load(path, 2, psf2fs_load_callback, fs);

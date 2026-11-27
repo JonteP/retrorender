@@ -51,7 +51,7 @@ som ligger närmast hårdvaran. Kärnorna är valda för korrekthet, inte fart:
 
 | Format | Kärna | Kommentar |
 | --- | --- | --- |
-| PSF, PSF2 | Highly Experimental | Kräver BIOS (se nedan). DMA-timing som hårdvaran (`psx_dma = "harsh"`) |
+| PSF, PSF2 | Highly Experimental | Kräver BIOS (se nedan). DMA-timing som i foo_psf (`psx_dma = "friendly"`; `"harsh"` fördröjer som hårdvaran men kan knäcka rippar) |
 | SSF, DSF | Highly Theoretical | 68000 via Musashi, DSP tolkad (ingen dynarec) |
 | USF | lazyusf2 | RSP på låg nivå (spelets egen mikrokod körs), sinc-resampling |
 | GSF | mGBA 0.10.3 | |
@@ -66,7 +66,7 @@ PS1/PS2 behöver Sonys BIOS, som inte kan följa med: lägg `hebios.bin` eller e
 `/health` visar vilken fil som används.
 
 Docker-bygget hämtar varje kärna på en fast commit och kör `tools/xsfplay/smoketest.py`,
-som spelar egna handskrivna testprogram (GBA, Saturn, Dreamcast, DS) och kontrollerar tonhöjden.
+som spelar egna handskrivna testprogram (GBA, Saturn, Dreamcast, DS, PS1) och kontrollerar tonhöjden.
 
 ## Installera på TrueNAS SCALE
 
@@ -355,8 +355,8 @@ Kod, kommentarer och genererade filer skrivs på engelska.
 
 - Ingen spolning inom ett spår: Range-förfrågningar besvaras med hela filen.
 - SID utan Songlengths.md5 spelas `default_s`.
-- xSF: PSF/PSF2 kräver en BIOS-fil från användaren. Varken PSF eller USF har testfiler i
-  bygget (de kräver BIOS respektive en N64-sparfil), så de provas bara med riktiga rippar.
+- xSF: PSF/PSF2 kräver en BIOS-fil från användaren. PSF1 provas i bygget med en egen
+  BIOS-attrapp; PSF2 och USF har inga testfiler och provas bara med riktiga rippar.
 - jaudio: vibrato/tremolo och IIR/FIR-filter är inte implementerade (används inte av Galaxy).
 - Synkad uppspelning i flera rum samtidigt finns inte.
 - Subsonic-API:t svarar bara JSON, inte XML.

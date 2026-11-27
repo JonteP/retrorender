@@ -40,7 +40,7 @@ class Registry:
             XsfEngine(sr, cli=eng.get("xsfplay_cli", "xsfplay"), bios=eng.get("psx_bios"),
                       meta_dir=os.environ.get("RETRO_META", cfg.get("meta_dir", "/meta")),
                       ds_jit=bool(eng.get("xsf_ds_jit", False)),
-                      psx_dma=str(eng.get("psx_dma", "harsh"))),
+                      psx_dma=str(eng.get("psx_dma", "friendly"))),
         ]
         self.xsf = candidates[-1]
         self.engines = [e for e in candidates if e.available()]

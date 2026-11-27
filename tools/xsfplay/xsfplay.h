@@ -37,7 +37,7 @@ struct Backend {
 struct Options {
     int rate = 44100;
     const char *bios = nullptr;
-    bool harsh = true;
+    bool harsh = false;
     bool jit = false;
 };
 
