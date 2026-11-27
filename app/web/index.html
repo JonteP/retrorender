@@ -1374,7 +1374,7 @@ async function viewSettings(v) {
   let order = c.order.slice();
   const st = s.status || {};
   v.innerHTML = `<h1>Settings</h1>
-    <p class="muted">Saved in <span class="mono">${esc(s.path)}</span>. config.toml still holds everything else.</p>
+    <p class="muted">Changes are saved as you make them, in <span class="mono">${esc(s.path)}</span>.</p>
     ${s.writable ? "" : `<div class="warnbox">The meta folder is read-only, so settings cannot be saved.</div>`}
     <section class="card" style="max-width:760px">
       <h2>Covers</h2>
@@ -1394,7 +1394,6 @@ async function viewSettings(v) {
         <label>Preferred releases, in order: <input type="text" id="cregions" value="${esc(c.regions.join(", "))}" style="width:260px"></label>
       </div>
       <div class="row" style="margin-top:16px">
-        <button class="primary" id="csave" ${s.writable ? "" : "disabled"}>Save</button>
         <span style="flex:1"></span>
         <button id="cfetch" ${s.writable ? "" : "disabled"}>Fetch missing covers now</button>
         <button id="cretry" ${s.writable ? "" : "disabled"} title="Search again for every album: also ones where nothing was found, and ones with a fetched cover (not covers you picked or made)">Search all again</button>
@@ -1410,7 +1409,6 @@ async function viewSettings(v) {
           <span class="muted">· ${s.online.status.cache_gb} GB used</span></label>
       </div>
       <div class="row" style="margin-top:16px">
-        <button class="primary" id="osave" ${s.writable ? "" : "disabled"}>Save</button>
         <span style="flex:1"></span>
         <button id="orefresh">Read the lists again</button></div>
       <p class="muted" id="ostatus"></p>
@@ -1429,13 +1427,32 @@ async function viewSettings(v) {
         <span class="grow"><b>${esc(SOURCE_LABEL[k] || k)}</b><div class="muted">${esc(s.sources[k] || "")}</div></span>
         <button data-up="${i}" ${i ? "" : "disabled"} title="Higher priority">↑</button>
         <button data-dn="${i}" ${i < order.length - 1 ? "" : "disabled"} title="Lower priority">↓</button></li>`).join("");
-    $("#srcs").querySelectorAll("[data-up]").forEach((b) => (b.onclick = () => { const i = +b.dataset.up; [order[i - 1], order[i]] = [order[i], order[i - 1]]; drawSrcs(); }));
-    $("#srcs").querySelectorAll("[data-dn]").forEach((b) => (b.onclick = () => { const i = +b.dataset.dn; [order[i + 1], order[i]] = [order[i], order[i + 1]]; drawSrcs(); }));
+    $("#srcs").querySelectorAll("[data-up]").forEach((b) => (b.onclick = () => { const i = +b.dataset.up; [order[i - 1], order[i]] = [order[i], order[i - 1]]; drawSrcs(); saveCovers(); }));
+    $("#srcs").querySelectorAll("[data-dn]").forEach((b) => (b.onclick = () => { const i = +b.dataset.dn; [order[i + 1], order[i]] = [order[i], order[i + 1]]; drawSrcs(); saveCovers(); }));
     $("#srcs").querySelectorAll("[data-en]").forEach((b) => (b.onchange = () => {
       c.enabled = b.checked ? [...c.enabled, b.dataset.en] : c.enabled.filter((x) => x !== b.dataset.en);
+      saveCovers();
     }));
   };
+  // every change is saved at once (a short pause gathers quick clicks into one save)
+  let coverTimer = null;
+  const saveCovers = () => {
+    clearTimeout(coverTimer);
+    coverTimer = setTimeout(async () => {
+      const body = { covers: { order, enabled: c.enabled, auto: $("#cauto").checked,
+        libretro_type: document.querySelector("[name=ltype]:checked").value,
+        shape: document.querySelector("[name=shape]:checked").value,
+        regions: $("#cregions").value.split(",").map((x) => x.trim()).filter(Boolean) } };
+      try {
+        const r = await post("settings", body); showStatus(r.status); toast("Saved");
+        document.body.classList.toggle("covers-whole", r.covers.shape === "original");
+      } catch (e) { toast(e.message, true); }
+    }, 400);
+  };
   drawSrcs();
+  document.querySelectorAll("[name=ltype], [name=shape]").forEach((r) => (r.onchange = saveCovers));
+  $("#cauto").onchange = saveCovers;
+  $("#cregions").onchange = saveCovers;
   const showStatus = (x) => {
     if (!x) return;
     $("#cstatus").textContent = x.running ? `Fetching… ${x.checked} of ${x.total} albums checked, ${x.found} found`
@@ -1449,23 +1466,13 @@ async function viewSettings(v) {
     if (!document.body.contains($("#cstatus"))) return clearInterval(poll);
     try { showStatus(await api("covers/status")); } catch (e) { /* later */ }
   }, 3000);
-  $("#csave").onclick = async () => {
-    const body = { covers: { order, enabled: c.enabled, auto: $("#cauto").checked,
-      libretro_type: document.querySelector("[name=ltype]:checked").value,
-      shape: document.querySelector("[name=shape]:checked").value,
-      regions: $("#cregions").value.split(",").map((x) => x.trim()).filter(Boolean) } };
-    try {
-      const r = await post("settings", body); showStatus(r.status); toast("Saved");
-      document.body.classList.toggle("covers-whole", r.covers.shape === "original");
-    }
-    catch (e) { toast(e.message, true); }
-  };
   const fetchNow = (retry) => async () => {
     try { const r = await post("covers/fetch", { retry }); showStatus(r.status); toast("Fetching covers in the background"); }
     catch (e) { toast(e.message, true); }
   };
   $("#cfetch").onclick = fetchNow(false);
-  $("#cretry").onclick = fetchNow(true);
+  $("#cretry").onclick = () => confirm("Search again for every album? Covers fetched before may change; " +
+    "covers you picked or made stay.") && fetchNow(true)();
   if (s.online && s.online.available) settingsOnline(s);
 }
 
@@ -1487,11 +1494,12 @@ function settingsOnline(s) {
           const info = x ? (x.error ? " · list failed" : x.refreshed ? ` · ${x.listed}` : " · not read yet") : "";
           return `<label title="${esc(x && x.error ? x.error : sys)}"><input type="checkbox" data-osys="${k}/${sys}" ${c.systems.includes(sys) ? "checked" : ""}> ${esc(name)}<span class="muted">${info}</span></label>`;
         }).join("")}</div></li></div>`).join("");
-    $("#osrc").querySelectorAll("[data-oen]").forEach((b) => (b.onchange = () => (src[b.dataset.oen].enabled = b.checked)));
+    $("#osrc").querySelectorAll("[data-oen]").forEach((b) => (b.onchange = () => { src[b.dataset.oen].enabled = b.checked; saveOnline(); }));
     $("#osrc").querySelectorAll("[data-osys]").forEach((b) => (b.onchange = () => {
       const [k, sys] = b.dataset.osys.split("/");
       const on = src[k].systems;
       src[k].systems = b.checked ? [...on, sys] : on.filter((x) => x !== sys);
+      saveOnline(b.checked ? sys : null);
     }));
   };
   draw();
@@ -1535,15 +1543,35 @@ function settingsOnline(s) {
     if (!document.body.contains($("#ostatus"))) return clearInterval(opoll);
     try { show(await api("online/status")); } catch (e) { /* later */ }
   }, 4000);
-  $("#osave").onclick = async () => {
-    const sources = {};
-    for (const [k, c] of Object.entries(src)) sources[k] = { enabled: c.enabled, systems: c.systems };
-    try {
-      await post("settings", { online: { sources, temp_limit_gb: +$("#olimit").value } });
-      toast("Saved; reading new lists in the background");
-    } catch (e) { toast(e.message, true); }
+  let onTimer = null, added = false;
+  const saveOnline = (newSystem = null) => {
+    added = added || !!newSystem;
+    clearTimeout(onTimer);
+    onTimer = setTimeout(async () => {
+      const sources = {};
+      for (const [k, c] of Object.entries(src)) sources[k] = { enabled: c.enabled, systems: c.systems };
+      try {
+        await post("settings", { online: { sources, temp_limit_gb: limit } });
+        toast(added ? "Saved; the new lists are read in the background (a few minutes per console)" : "Saved");
+        added = false;
+      } catch (e) { toast(e.message, true); }
+    }, 800);
+  };
+  // a smaller cache removes cached albums at once: ask first
+  let limit = s.online.temp_limit_gb;
+  $("#olimit").onchange = (e) => {
+    const v = Math.max(0, +e.target.value), used = s.online.status.cache_gb;
+    if (v < used && !confirm(`The cache holds ${used} GB. Lowering it to ${v} GB removes about ${(used - v).toFixed(1)} GB ` +
+        "of cached albums now, least recently played first. Albums you added are kept. Continue?")) {
+      e.target.value = limit; return;
+    }
+    limit = v; saveOnline();
   };
   $("#orefresh").onclick = async () => {
+    const n = Object.values(src).reduce((a, c) => a + (c.enabled ? c.systems.length : 0), 0);
+    if (!confirm(`Read the lists of ${n} ${n === 1 ? "console" : "consoles"} again? Each takes a few minutes, ` +
+        "with a pause between requests so as not to load the site. Lists are also read by themselves once a day. " +
+        "Downloads still go first.")) return;
     try { await post("online/refresh?force=1"); toast("Reading the lists in the background"); } catch (e) { toast(e.message, true); }
   };
 }

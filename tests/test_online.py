@@ -54,6 +54,9 @@ assert not o.enabled and o.active() == []
 settings.update("online", {"sources": {"joshw": {"enabled": True, "systems": ["nsf"]}},
                            "temp_limit_gb": 0.001})      # ~1 MB: room for one download
 assert o.enabled and o.active() == [("joshw", "nsf")]
+# saved as real TOML tables (0.16.0 wrote the sources as a string) and read back
+assert Settings(meta, True).get("online")["sources"]["joshw"] == {"enabled": True, "systems": ["nsf"]}
+assert "[online.sources.joshw]" in (meta / "_settings.toml").read_text()
 o._refresh("joshw", "nsf", force=True)
 total, rows = o.search()
 assert total == 3, rows
