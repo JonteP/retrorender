@@ -447,12 +447,12 @@ class Subsonic:
         if al is None:
             song = self.ix.songs.get(i)
             al = self.ix.albums.get(song.album_id) if song else None
-        if al is None or not al.cover:
+        img = self.lib.cover_image(al) if al else None
+        if img is None:
             raise SubsonicError(70, "no image")
-        p = Path(al.cover)
-        data = p.read_bytes()
+        data, ctype, _ = img
         h.send_response(200)
-        h.send_header("Content-Type", "image/png" if p.suffix.lower() == ".png" else "image/jpeg")
+        h.send_header("Content-Type", ctype)
         h.send_header("Content-Length", str(len(data)))
         h.end_headers()
         h.wfile.write(data)

@@ -16,6 +16,13 @@ Routes (all require HTTP Basic auth with the [web] or [subsonic] credentials):
   POST /api/album/<id>/cover      upload a cover (body = JPEG or PNG), stored in /meta
   POST /api/album/<id>/cover/delete  remove an uploaded cover
   POST /api/song/<id>/title       rename one track {title}: titles.toml + album.toml
+  GET  /api/settings             settings changed in the web UI (/meta/_settings.toml)
+  POST /api/settings             {covers: {order, enabled, auto, libretro_type, shape, regions}}
+  GET  /api/covers/status        the background cover fetch
+  POST /api/covers/fetch         fetch missing covers now {retry: true = also earlier misses}
+  GET  /api/covers/remote?system=&path=   an image from libretro-thumbnails (for the editor)
+  GET  /api/album/<id>/cover/candidates?q=&type=   covers from the sources for this album
+  POST /api/album/<id>/cover/pick  {system, path, type, use: "cover" | "crop"}
   GET  /api/engines               what each engine can show and control (see Engine.describe)
   GET  /api/song/<id>/engine      the same for one track (voice names etc.)
   GET  /api/playlists             playlists (without songs)
@@ -54,8 +61,10 @@ PAGE = Path(__file__).parent / "web" / "index.html"
 
 class WebUI:
     def __init__(self, cfg: dict, lib, meta, cat, status_fn, probe, joshw=None,
-                 playlists=None, registry=None):
+                 playlists=None, registry=None, settings=None, fetcher=None):
         self.cfg = cfg
+        self.settings = settings
+        self.fetcher = fetcher
         self.playlists = playlists
         self.registry = registry
         self.lib = lib
@@ -123,6 +132,10 @@ class WebUI:
             return h._json(*self.song_engine(parts[1])) or True
         if name == "song" and len(parts) >= 3 and parts[2] == "title" and post:
             return h._json(*self.set_title(parts[1], h)) or True
+        if name == "settings":
+            return h._json(*self.settings_api(h, post)) or True
+        if name == "covers" and len(parts) > 1:
+            return self.covers_api(h, parts[1], q, post)
         if name in ("playlists", "playlist"):
             return h._json(*self._playlists(h, parts, post)) or True
         if name == "album" and len(parts) >= 2:
@@ -144,6 +157,10 @@ class WebUI:
                 return h._json(*self.save_titles(part, h)) or True
             if action == "regenerate" and post:
                 return h._json(self.regenerate(part)) or True
+            if action == "cover" and len(parts) > 3 and parts[3] == "candidates":
+                return h._json(*self.cover_candidates(al, q)) or True
+            if action == "cover" and post and len(parts) > 3 and parts[3] == "pick":
+                return h._json(*self.cover_pick(al, h)) or True
             if action == "cover" and post:
                 if len(parts) > 3 and parts[3] == "delete":
                     return h._json(*self.delete_cover(al, everything=bool(q.get("all")))) or True
@@ -370,6 +387,122 @@ class WebUI:
         threading.Thread(target=self.lib.scan, daemon=True).start()
         return {"ok": True, "title": title}, 200
 
+    # --- settings and cover sources ---------------------------------------------------------
+    def settings_api(self, h, post):
+        from settings import COVER_SOURCES, LIBRETRO_TYPES, SHAPES
+        st = self.settings
+        if st is None:
+            return {"error": "no settings"}, 503
+        if post:
+            try:
+                b = json.loads(self._body(h) or "{}")
+                for sec, vals in b.items():
+                    if sec != "covers" or not isinstance(vals, dict):
+                        raise ValueError(f"unknown section {sec}")
+                    st.update(sec, vals)
+            except PermissionError as e:
+                return {"error": str(e)}, 403
+            except ValueError as e:
+                return {"error": str(e)}, 400
+        try:
+            import PIL  # noqa: F401
+            pillow = True
+        except ImportError:
+            pillow = False
+        return {"covers": st.covers(), "writable": st.writable, "path": str(st.path or ""),
+                "sources": COVER_SOURCES, "libretro_types": list(LIBRETRO_TYPES), "shapes": list(SHAPES),
+                "pillow": pillow, "status": self.fetcher.status if self.fetcher else None}, 200
+
+    def covers_api(self, h, what, q, post):
+        f = self.fetcher
+        if f is None:
+            return h._json({"error": "cover fetching is off"}, 503) or True
+        if what == "status":
+            return h._json(f.status) or True
+        if what == "fetch" and post:
+            try:
+                b = json.loads(self._body(h) or "{}")
+            except ValueError:
+                b = {}
+            if b.get("retry"):
+                f.forget_misses()
+            f.start(manual=True)
+            return h._json({"ok": True, "status": f.status}) or True
+        if what == "remote":
+            system, path = q.get("system", ""), q.get("path", "")
+            try:
+                if not f.libretro.known(system, path):        # only images that are listed
+                    return h._json({"error": "unknown image"}, 404) or True
+                data = f.remote_image(system, path)
+            except Exception as e:      # noqa: BLE001
+                return h._json({"error": str(e)}, 502) or True
+            h.send_response(200)
+            h.send_header("Content-Type", "image/png" if data[:4] == b"\x89PNG" else "image/jpeg")
+            h.send_header("Content-Length", str(len(data)))
+            h.send_header("Cache-Control", "max-age=86400")
+            h.end_headers()
+            h.wfile.write(data)
+            return True
+        return h._json({"error": "unknown route"}, 404) or True
+
+    def cover_candidates(self, al, q):
+        f = self.fetcher
+        if f is None:
+            return {"candidates": []}, 200
+        c = self.settings.covers()
+        kind = q.get("type") or c["libretro_type"]
+        if kind not in ("boxart", "title", "snap", "logo"):
+            return {"error": "unknown type"}, 400
+        try:
+            if q.get("q"):
+                hits = f.libretro.browse(al.platform, q["q"], kind, c)
+            else:
+                hits = f.libretro.search(al.platform, f.names(al), kind, c, limit=12)
+        except Exception as e:      # noqa: BLE001 - shown in the editor
+            return {"error": str(e), "candidates": []}, 200
+        systems = f.libretro.systems_for(al.platform, c.get("libretro_systems", {}))
+        for x in hits:
+            x["url"] = f"/api/covers/remote?system={quote(x['system'])}&path={quote(x['path'])}"
+            x["type"] = kind
+        return {"candidates": hits, "systems": systems, "type": kind}, 200
+
+    def cover_pick(self, al, h):
+        """Use an image from a source: as the album's cover (kept even if the automatic
+        choice would differ), or as the image to crop from in the editor."""
+        f = self.fetcher
+        if f is None or not self.meta.writable:
+            return {"error": "the meta folder is not writable"}, 403
+        try:
+            b = json.loads(self._body(h) or "{}")
+            system, path = str(b.get("system", "")), str(b.get("path", ""))
+            if not f.libretro.known(system, path):
+                return {"error": "unknown image"}, 404
+            data = f.remote_image(system, path)
+        except ValueError as e:
+            return {"error": str(e)}, 400
+        except Exception as e:      # noqa: BLE001
+            return {"error": str(e)}, 502
+        kind = str(b.get("type") or "boxart")
+        hit = {"system": system, "path": path, "name": path.split("/", 1)[-1].rsplit(".", 1)[0]}
+        if b.get("use") == "crop":
+            ext = "png" if data[:4] == b"\x89PNG" else "jpg"
+            for e in ("jpg", "png"):
+                self.lib.cover_target(al.key, e, "source").unlink(missing_ok=True)
+            p = self.lib.cover_target(al.key, ext, "source")
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(data)
+            return {"ok": True}, 200
+        f.save(al, hit, kind, data, pinned=True)
+        old = self.lib.uploaded_cover(al.key)        # your own cover would hide it
+        if old:
+            Path(old).unlink(missing_ok=True)
+        al.covers.pop("upload", None)
+        al.covers["auto"] = self.lib.auto_cover(al.key)
+        self.lib.apply_covers(al)
+        if al.cover_origin != "libretro":
+            return {"ok": True, "note": "saved, but another source comes first on the Settings page"}, 200
+        return {"ok": True}, 200
+
     # --- playlists -----------------------------------------------------------------------
     def _playlist_brief(self, pl: dict) -> dict:
         songs = self.playlists.resolve(pl["songs"])
@@ -441,34 +574,32 @@ class WebUI:
                  discs=[{"disc": i, "label": p["label"]} for i, p in enumerate(parts, 1)]
                  if len(parts) > 1 else [],
                  cover_uploaded=bool(self.lib.uploaded_cover(al.key)),
+                 cover_origin=al.cover_origin,
+                 cover_info=self.fetcher.auto_info(al.key) if self.fetcher else None,
                  rip_cover=bool(al.rip_cover),
-                 cover_source=bool(self.lib.uploaded_cover(al.key, source=True)),
+                 cover_source=bool(self.lib.uploaded_cover(al.key, "source")),
                  writable=self.meta.writable)
         d.update({k: parts[0][k] for k in ("toml", "toml_state", "toml_path", "titles",
                                            "titles_builtin", "titles_template")})
         return d
 
     def _cover(self, h, album_id: str, original: bool = False) -> bool:
-        """The album's cover; original=True leaves out an uploaded one (for the crop tool)."""
+        """The album's cover; original=True: the image to crop from (for the editor)."""
         al = self.lib.index.albums.get(album_id)
-        path = al and ((self.lib.uploaded_cover(al.key, source=True) or al.rip_cover)
-                       if original else al.cover)
-        if not path or not Path(path).is_file():
+        img = self.lib.cover_image(al, original) if al else None
+        if img is None:
             h.send_response(404)
             h.send_header("Content-Length", "0")
             h.end_headers()
             return True
-        p = Path(path)
-        st = p.stat()
-        etag = f'"{int(st.st_mtime)}-{st.st_size}"'
+        data, ctype, etag = img
         if h.headers.get("If-None-Match") == etag:      # a changed cover shows up at once
             h.send_response(304)
             h.send_header("ETag", etag)
             h.end_headers()
             return True
-        data = p.read_bytes()
         h.send_response(200)
-        h.send_header("Content-Type", "image/png" if p.suffix.lower() == ".png" else "image/jpeg")
+        h.send_header("Content-Type", ctype)
         h.send_header("Content-Length", str(len(data)))
         h.send_header("Cache-Control", "no-cache")
         h.send_header("ETag", etag)
@@ -492,15 +623,16 @@ class WebUI:
         if ext is None:
             return {"error": "only JPEG and PNG images are supported"}, 415
         for e in ("jpg", "png"):                    # the other format of the same kind
-            self.lib.cover_target(al.key, e, source).unlink(missing_ok=True)
-        p = self.lib.cover_target(al.key, ext, source)
+            self.lib.cover_target(al.key, e, "source" if source else "").unlink(missing_ok=True)
+        p = self.lib.cover_target(al.key, ext, "source" if source else "")
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".tmp")
         tmp.write_bytes(data)
         tmp.replace(p)
         if source:
             return {"ok": True}, 200
-        al.cover = str(p)
+        al.covers["upload"] = str(p)
+        self.lib.apply_covers(al)
         log.info("cover for %s saved to %s", al.name, p)
         return {"ok": True}, 200
 
@@ -509,14 +641,14 @@ class WebUI:
         if not self.meta.writable:
             return {"error": "the meta folder is not writable"}, 403
         if everything:
-            src = self.lib.uploaded_cover(al.key, source=True)
+            src = self.lib.uploaded_cover(al.key, "source")
             if src:
                 Path(src).unlink(missing_ok=True)
         old = self.lib.uploaded_cover(al.key)
         if old:
             Path(old).unlink(missing_ok=True)
-            if al.cover == old:
-                al.cover = al.rip_cover
+            al.covers.pop("upload", None)
+            self.lib.apply_covers(al)
             threading.Thread(target=self.lib.scan, daemon=True).start()
         return {"ok": True}, 200
 

@@ -197,8 +197,17 @@
   .cstage { overflow: hidden; }
   .cprev { width: 180px; height: 180px; border-radius: 8px; border: 1px solid var(--line);
     background: repeating-conic-gradient(#222 0 25%, #2c2c2c 0 50%) 0 0 / 16px 16px; }
-  body.fitcovers .cover, body.fitcovers .thumb, body.fitcovers .nowcover, body.fitcovers .mosaic div {
-    background-size: contain; background-repeat: no-repeat; }
+  .cands { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; margin-top: 10px;
+    max-height: 34vh; overflow: auto; }
+  .cand { cursor: pointer; font-size: 12px; color: var(--muted); }
+  .cand div { aspect-ratio: 1; border-radius: 6px; border: 1px solid var(--line); background: var(--panel2) center/contain no-repeat; }
+  .cand:hover div { border-color: var(--accent); }
+  .srclist { list-style: none; padding: 0; margin: 8px 0; max-width: 640px; }
+  .srclist li { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--line);
+    border-radius: 8px; margin-bottom: 6px; background: var(--panel2); }
+  .srclist li .grow { flex: 1; }
+  .srclist li button { padding: 2px 8px; }
+  .opts label { display: block; margin: 4px 0; }
   tr.drop td { box-shadow: inset 0 2px 0 var(--accent); }
   @media (max-width: 860px) {
     .lib, .ahead, .two { grid-template-columns: 1fr; }
@@ -222,6 +231,7 @@
     <a href="#/library" data-nav="library">Library</a>
     <a href="#/playlists" data-nav="playlists">Playlists</a>
     <a href="#/joshw" data-nav="joshw">joshw</a>
+    <a href="#/settings" data-nav="settings">Settings</a>
     <a href="#/catalog" data-nav="catalog">Catalog</a>
   </nav>
   <span class="upd" id="upd" hidden></span>
@@ -555,14 +565,14 @@ function dragSort(container, sel, move) {
 }
 
 // --- menus and "add to playlist" -----------------------------------------------------------
-function menu(ev, items) {
+function menu(ev, items, anchor = null) {
   ev.preventDefault(); ev.stopPropagation();
   closeMenu();
   const m = document.createElement("div");
-  m.className = "menu"; m.id = "menu";
+  m.className = "menu"; m.id = "menu"; m.dataset.t = Date.now();
   m.innerHTML = items.map((it, i) => it === "-" ? "<hr>" : `<button data-i="${i}">${esc(it[0])}</button>`).join("");
   document.body.appendChild(m);
-  const r = ev.currentTarget.getBoundingClientRect();
+  const r = (anchor || ev.currentTarget).getBoundingClientRect();
   const x = Math.min(r.left, innerWidth - m.offsetWidth - 8), y = r.bottom + m.offsetHeight > innerHeight - 70
     ? r.top - m.offsetHeight - 4 : r.bottom + 4;
   m.style.left = Math.max(8, x) + "px"; m.style.top = Math.max(8, y) + "px";
@@ -570,7 +580,7 @@ function menu(ev, items) {
 }
 function closeMenu() { const m = $("#menu"); if (m) m.remove(); }
 document.addEventListener("click", (e) => { if (!e.target.closest("#menu")) closeMenu(); });
-window.addEventListener("scroll", closeMenu, true);
+window.addEventListener("scroll", () => { const m = $("#menu"); if (m && Date.now() - m.dataset.t > 400) closeMenu(); }, true);
 
 // menu items for a list of tracks; `get` may be async (fetching an album's tracks first)
 function trackItems(get, one) {
@@ -751,6 +761,7 @@ async function route() {
     else if (page === "playlist") await viewPlaylist(v, parts[1]);
     else if (page === "catalog") await viewCatalog(v);
     else if (page === "joshw") await viewJoshw(v, q);
+    else if (page === "settings") await viewSettings(v);
     else await viewOverview(v);
   } catch (e) { v.innerHTML = `<div class="card"><b>Error:</b> ${esc(e.message)}</div>`; }
 }
@@ -862,8 +873,6 @@ async function viewLibrary(v, q) {
           <select class="sort" id="sort" title="Sort albums">
             ${[["", "Console, title"], ["name", "Title"], ["year", "Year"], ["added", "Recently added"]]
               .map(([k, l]) => `<option value="${k}" ${(q.get("sort") || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select>
-          <select class="sort" id="coverfit" title="How covers that are not square are shown">
-            <option value="fill">Covers: fill</option><option value="fit" ${store.get("coverfit", "fill") === "fit" ? "selected" : ""}>Covers: whole image</option></select>
           ${filtered ? `<a class="link" href="#/library">Clear filters</a>` : ""}
         </div>
       </div>
@@ -880,7 +889,6 @@ async function viewLibrary(v, q) {
     if (val) p.set("q", val); else p.delete("q");
     location.hash = "#/library" + (p.toString() ? "?" + p : "");
   };
-  $("#coverfit").onchange = (e) => { store.set("coverfit", e.target.value); document.body.classList.toggle("fitcovers", e.target.value === "fit"); };
   $("#sort").onchange = (e) => (location.hash = link("sort", e.target.value || null));
   const listArtists = () => {
     const f = $("#afilter").value.trim().toLowerCase();
@@ -1042,18 +1050,28 @@ function regenerateAlbum(a, i = 0) {
   };
 }
 
-// --- cover editor: crop any part of the image, optionally padded to a square -----------------
-// The image you choose is kept in /meta as the one to crop from; the result is made in the
-// browser and uploaded as the album's cover, so TVs and Subsonic apps get the same picture.
-// The rip's own image is never changed.
+// --- cover editor ---------------------------------------------------------------------------
+// Crop any part of an image, optionally padded to a square. The image comes from you
+// ("Choose image…", kept in /meta to crop from again), from a source (libretro-thumbnails),
+// or from the rip. The result is uploaded as the album's cover, so TVs and Subsonic apps get
+// the same picture. The rip's own image is never changed.
+const TYPE_LABEL = { boxart: "Box art", title: "Title screen", snap: "Screenshot", logo: "Logo" };
 async function editCover(a) {
   const img = new Image();
-  let square = true, pad = true, box = null;          // box: crop rect in image pixels
+  let settings = { covers: { shape: "crop", libretro_type: "boxart", enabled: [] } };
+  try { settings = await api("settings"); } catch (e) { /* defaults */ }
+  const cs = settings.covers;
+  let square = cs.shape !== "pad", pad = true, box = null;          // box: crop rect in image pixels
   const src = a.cover_source || a.rip_cover ? `${coverUrl(a.id)}?original=1&t=${Date.now()}` : a.cover ? coverUrl(a.id) : null;
-  modal(`<div class="row" style="justify-content:space-between"><h1>Cover</h1>
+  const info = a.cover_info;
+  const origin = { upload: "your own cover", toml: "album.toml", rip: "the rip's own image",
+    libretro: info ? `libretro-thumbnails · ${TYPE_LABEL[info.type] || info.type} · ${info.name}` : "libretro-thumbnails" }[a.cover_origin];
+  const useSources = cs.enabled.includes("libretro");
+  modal(`<div class="row" style="justify-content:space-between"><div><h1>Cover</h1>
+      <p class="muted" style="margin:0">${origin ? "Now: " + esc(origin) : "No cover yet."}</p></div>
       <label class="button">Choose image…<input type="file" id="cfile" accept="image/jpeg,image/png,image/webp" hidden></label></div>
-    ${src ? `<div class="row" style="margin:8px 0 12px">
-        <label><input type="checkbox" id="csq" checked> Square crop</label>
+    ${src ? `<div class="row" style="margin:12px 0">
+        <label><input type="checkbox" id="csq" ${square ? "checked" : ""}> Square crop</label>
         <label id="padwrap"><input type="checkbox" id="cpad" checked> Pad to a square (shows all of the crop)</label>
         <button id="cwhole" style="padding:4px 10px">Whole image</button>
         <span class="muted" id="cinfo"></span></div>
@@ -1061,12 +1079,19 @@ async function editCover(a) {
         <div class="cstage" id="cstage"><img id="cimg" alt=""><div class="cbox" id="cbox"><i data-h="nw"></i><i data-h="ne"></i><i data-h="sw"></i><i data-h="se"></i></div></div>
         <div><div class="muted" style="margin-bottom:6px">Result</div><canvas id="cprev" width="180" height="180" class="cprev"></canvas></div>
       </div>`
-      : `<p class="muted">This album has no cover yet. Choose an image.</p>`}
+      : `<p class="muted">This album has no image to crop. Choose one, or pick one below.</p>`}
+    ${useSources ? `<h2 style="margin-top:20px">From libretro-thumbnails</h2>
+      <div class="row">
+        <select class="sort" id="ctype">${Object.entries(TYPE_LABEL).map(([k, l]) => `<option value="${k}" ${k === cs.libretro_type ? "selected" : ""}>${l}</option>`).join("")}</select>
+        <input type="search" id="cq" placeholder="Search another name (Enter)" style="flex:1;min-width:200px">
+        <span class="muted" id="cstat"></span></div>
+      <div class="cands" id="cands"></div>` : ""}
     <div class="row" style="justify-content:space-between;margin-top:14px">
-      <div class="row">${a.cover_uploaded ? `<button id="cdel">${a.rip_cover ? "Use the rip's own" : "Remove cover"}</button>` : ""}
+      <div class="row">${a.cover_uploaded ? `<button id="cdel">${a.rip_cover ? "Remove my cover" : "Remove cover"}</button>` : ""}
         ${a.cover_source ? `<button id="cforget" title="Delete the image you chose (the cover made from it goes too)">Forget my image</button>` : ""}</div>
       <div class="row"><button onclick="closeModal()">Cancel</button>
         <button class="primary" id="csave" ${src ? "" : "disabled"}>Save cover</button></div></div>`, true);
+  const reopen = async () => { try { editCover(await api("album/" + a.id)); } catch (e) { toast(e.message, true); } };
   $("#cfile").onchange = async (e) => {
     const f = e.target.files[0];
     if (!f) return;
@@ -1076,19 +1101,49 @@ async function editCover(a) {
           c.width = i.naturalWidth; c.height = i.naturalHeight; c.getContext("2d").drawImage(i, 0, 0);
           c.toBlob(r, "image/png"); }; i.src = URL.createObjectURL(f); });
       await api(`album/${a.id}/cover?source=1`, { method: "POST", headers: { "Content-Type": body.type }, body });
-      editCover(Object.assign(a, { cover_source: true }));
+      reopen();
     } catch (err) { toast(err.message, true); }
   };
   const remove = async (all) => {
     try {
       await api(`album/${a.id}/cover/delete${all ? "?all=1" : ""}`, { method: "POST" }); closeModal();
-      toast(all ? "Your image and the cover made from it are removed" : a.rip_cover ? "Using the rip's own cover" : "Cover removed");
+      toast(all ? "Your image and the cover made from it are removed" : "Your cover is removed");
       setTimeout(route, 800);
     } catch (err) { toast(err.message, true); }
   };
   if ($("#cdel")) $("#cdel").onclick = () => remove(false);
   if ($("#cforget")) $("#cforget").onclick = () => confirm("Delete the image you chose for this album?") && remove(true);
+
+  // candidates from libretro-thumbnails: click to use as the cover, or to crop from
+  const loadCands = async () => {
+    const type = $("#ctype").value, qv = $("#cq").value.trim();
+    $("#cstat").textContent = "Searching…"; $("#cands").innerHTML = "";
+    try {
+      const r = await api(`album/${a.id}/cover/candidates?type=${type}${qv ? "&q=" + encodeURIComponent(qv) : ""}`);
+      $("#cstat").textContent = r.error ? r.error : r.candidates.length ? "" :
+        r.systems && r.systems.length ? `Nothing found in ${r.systems.join(", ")}` : `libretro has no console matching “${a.platform}”`;
+      $("#cands").innerHTML = r.candidates.map((c, i) => `<div class="cand" data-c="${i}" title="${esc(c.system)}">
+        <div style="background-image:url('${c.url}')"></div>${esc(c.name)}</div>`).join("");
+      $("#cands").querySelectorAll("[data-c]").forEach((el) => (el.onclick = (e) => {
+        const c = r.candidates[+el.dataset.c];
+        const pick = (use) => async () => {
+          try {
+            const res = await post(`album/${a.id}/cover/pick`, { system: c.system, path: c.path, type: c.type, use });
+            if (use === "crop") return reopen();
+            closeModal(); toast(res.note || "Cover saved"); route();
+          } catch (err) { toast(err.message, true); }
+        };
+        menu(e, [["Use as cover", pick("cover")], ["Crop this…", pick("crop")]], el);
+      }));
+    } catch (err) { $("#cstat").textContent = err.message; }
+  };
+  if (useSources) {
+    $("#ctype").onchange = loadCands;
+    $("#cq").onkeydown = (e) => { if (e.key === "Enter") loadCands(); };
+    loadCands();
+  }
   if (!src) return;
+
   const el = $("#cimg"), cb = $("#cbox");
   const scale = () => el.clientWidth / img.naturalWidth;
   const clamp = () => {
@@ -1131,8 +1186,9 @@ async function editCover(a) {
   img.onload = () => {
     el.src = img.src;
     const W = img.naturalWidth, H = img.naturalHeight, s = Math.min(W, H);
+    if (!square) box = { x: 0, y: 0, w: W, h: H };          // the "pad" default: all of it
     // a wide image (e.g. a whole case scan): start with the right-hand square, the front
-    box = W > H * 1.3 ? { x: W - s, y: 0, w: s, h: s } : { x: (W - s) / 2, y: (H - s) / 2, w: s, h: s };
+    else box = W > H * 1.3 ? { x: W - s, y: 0, w: s, h: s } : { x: (W - s) / 2, y: (H - s) / 2, w: s, h: s };
     el.onload = draw; if (el.complete) draw();
   };
   img.onerror = () => toast("Could not load the image", true);
@@ -1171,6 +1227,81 @@ async function editCover(a) {
       closeModal(); toast("Cover saved"); route();
     } catch (err) { toast(err.message, true); }
   };
+}
+
+// --- settings ---------------------------------------------------------------------------------
+const SOURCE_LABEL = { rip: "The rip's own image", libretro: "libretro-thumbnails" };
+async function viewSettings(v) {
+  const s = await api("settings");
+  const c = s.covers;
+  let order = c.order.slice();
+  const st = s.status || {};
+  v.innerHTML = `<h1>Settings</h1>
+    <p class="muted">Saved in <span class="mono">${esc(s.path)}</span>. config.toml still holds everything else.</p>
+    ${s.writable ? "" : `<div class="warnbox">The meta folder is read-only, so settings cannot be saved.</div>`}
+    <section class="card" style="max-width:760px">
+      <h2>Covers</h2>
+      <p class="muted">Where covers come from, in priority order. A cover you made yourself (“Edit cover…”) always comes first.</p>
+      <ul class="srclist" id="srcs"></ul>
+      <div class="two" style="grid-template-columns:1fr 1fr;gap:20px;margin-top:14px">
+        <div class="opts"><b>libretro image</b>
+          ${Object.entries(TYPE_LABEL).map(([k, l]) => `<label><input type="radio" name="ltype" value="${k}" ${c.libretro_type === k ? "checked" : ""}> ${l}</label>`).join("")}</div>
+        <div class="opts"><b>Images that are not square</b>
+          <label><input type="radio" name="shape" value="crop" ${c.shape === "crop" ? "checked" : ""}> Crop to a square (the middle)</label>
+          <label><input type="radio" name="shape" value="pad" ${c.shape === "pad" ? "checked" : ""}> Pad to a square (all of the image)</label>
+          <label><input type="radio" name="shape" value="original" ${c.shape === "original" ? "checked" : ""}> Leave as they are</label>
+          <p class="muted" style="margin:6px 0 0">Also where the cover editor starts. ${s.pillow ? "" : "<b>Pillow is missing, so images are served as they are.</b>"}</p></div>
+      </div>
+      <div class="opts" style="margin-top:14px">
+        <label><input type="checkbox" id="cauto" ${c.auto ? "checked" : ""}> Fetch covers automatically (after each library scan)</label>
+        <label>Preferred releases, in order: <input type="text" id="cregions" value="${esc(c.regions.join(", "))}" style="width:260px"></label>
+      </div>
+      <div class="row" style="margin-top:16px">
+        <button class="primary" id="csave" ${s.writable ? "" : "disabled"}>Save</button>
+        <span style="flex:1"></span>
+        <button id="cfetch" ${s.writable ? "" : "disabled"}>Fetch missing covers now</button>
+        <button id="cretry" ${s.writable ? "" : "disabled"} title="Also albums where nothing was found before">Try all again</button>
+      </div>
+      <p class="muted" id="cstatus"></p>
+    </section>`;
+  const drawSrcs = () => {
+    $("#srcs").innerHTML = `<li><span class="grow"><b>Your own cover</b> <span class="muted">· always first</span></span></li>` +
+      order.map((k, i) => `<li><input type="checkbox" data-en="${k}" ${c.enabled.includes(k) ? "checked" : ""}>
+        <span class="grow"><b>${esc(SOURCE_LABEL[k] || k)}</b><div class="muted">${esc(s.sources[k] || "")}</div></span>
+        <button data-up="${i}" ${i ? "" : "disabled"} title="Higher priority">↑</button>
+        <button data-dn="${i}" ${i < order.length - 1 ? "" : "disabled"} title="Lower priority">↓</button></li>`).join("");
+    $("#srcs").querySelectorAll("[data-up]").forEach((b) => (b.onclick = () => { const i = +b.dataset.up; [order[i - 1], order[i]] = [order[i], order[i - 1]]; drawSrcs(); }));
+    $("#srcs").querySelectorAll("[data-dn]").forEach((b) => (b.onclick = () => { const i = +b.dataset.dn; [order[i + 1], order[i]] = [order[i], order[i + 1]]; drawSrcs(); }));
+    $("#srcs").querySelectorAll("[data-en]").forEach((b) => (b.onchange = () => {
+      c.enabled = b.checked ? [...c.enabled, b.dataset.en] : c.enabled.filter((x) => x !== b.dataset.en);
+    }));
+  };
+  drawSrcs();
+  const showStatus = (x) => {
+    if (!x) return;
+    $("#cstatus").textContent = x.running ? `Fetching… ${x.checked} of ${x.total} albums checked, ${x.found} found`
+      : x.last_run ? `Last run ${x.last_run}: ${x.found} found, ${x.missing} not found${x.errors ? `, ${x.errors} errors (${x.last_error})` : ""}.`
+      : "Not run yet.";
+  };
+  showStatus(st);
+  const poll = setInterval(async () => {
+    if (!document.body.contains($("#cstatus"))) return clearInterval(poll);
+    try { showStatus(await api("covers/status")); } catch (e) { /* later */ }
+  }, 3000);
+  $("#csave").onclick = async () => {
+    const body = { covers: { order, enabled: c.enabled, auto: $("#cauto").checked,
+      libretro_type: document.querySelector("[name=ltype]:checked").value,
+      shape: document.querySelector("[name=shape]:checked").value,
+      regions: $("#cregions").value.split(",").map((x) => x.trim()).filter(Boolean) } };
+    try { const r = await post("settings", body); showStatus(r.status); toast("Saved"); }
+    catch (e) { toast(e.message, true); }
+  };
+  const fetchNow = (retry) => async () => {
+    try { const r = await post("covers/fetch", { retry }); showStatus(r.status); toast("Fetching covers in the background"); }
+    catch (e) { toast(e.message, true); }
+  };
+  $("#cfetch").onclick = fetchNow(false);
+  $("#cretry").onclick = fetchNow(true);
 }
 
 // --- playlists ------------------------------------------------------------------------------
@@ -1397,7 +1528,6 @@ async function refreshVersion() {
 }
 refreshVersion();
 setInterval(() => { if (!document.hidden) refreshVersion(); }, 60000);
-document.body.classList.toggle("fitcovers", store.get("coverfit", "fill") === "fit");
 restoreQueue();
 route();
 loadDevices();

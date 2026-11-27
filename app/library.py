@@ -89,6 +89,9 @@ class Album:
     year: int | None = None
     cover: str | None = None          # absolute path to an image
     rip_cover: str | None = None      # the same, leaving out an uploaded cover
+    rip_own: str | None = None        # the rip's own image
+    cover_origin: str = ""            # upload | toml | rip | libretro
+    covers: dict = field(default_factory=dict)   # every image found, by origin
     songs: list[str] = field(default_factory=list)
     region: str = ""
     chips: list = field(default_factory=list)
@@ -150,6 +153,10 @@ class Index:
 
 
 class Library:
+    settings = None                   # settings.Settings, set by the server (cover order)
+    shaper = None                     # covers.ShapeCache, set by the server (square covers)
+    after_scan: list = []             # called after each scan (e.g. fetching covers)
+
     def __init__(self, root: Path, registry, cfg: dict, probe, sample_rate: int,
                  meta: MetaStore, catalog=None):
         self.root = root
@@ -255,6 +262,8 @@ class Library:
                 self._start_hashing()
             log.info("index ready: %d artists, %d albums, %d songs in %.1fs",
                      len(idx.artists), len(idx.albums), len(idx.songs), time.time() - t0)
+            for fn in self.after_scan:
+                fn()
         except Exception:
             log.exception("indexing failed")
         finally:
@@ -450,11 +459,13 @@ class Library:
                            meta_artist=str(galb.get("artist") or "")
                            or next((a.meta_artist for a in als if a.meta_artist), ""),
                            year=galb.get("year") if isinstance(galb.get("year"), int)
-                           else (min(years) if years else None),
-                           cover=self._cover(gmeta or None, root, key)
-                           or next((a.cover for a in als if a.cover), None))
-            merged.rip_cover = (self._cover(gmeta or None, root, key, uploaded=False)
-                                or next((a.rip_cover for a in als if a.rip_cover), None))
+                           else (min(years) if years else None))
+            # the group's own images first, then any part's (e.g. Stream/folder.jpg)
+            merged.covers = self._covers(gmeta or None, root, key)
+            for a in als:
+                for o, p in a.covers.items():
+                    merged.covers.setdefault(o, p)
+            self.apply_covers(merged)
             merged.first_file = als[0].first_file
             for n, a in enumerate(als, 1):
                 idx.albums.pop(a.id, None)
@@ -494,42 +505,83 @@ class Library:
             own = split_names(so.composer)
             so.artists = [idx.artist(n) for n in own] if own else list(al.artists)
 
-    def cover_target(self, key: str, ext: str, source: bool = False) -> Path:
-        """Where an uploaded cover for this album is stored in /meta. source=True: the image
-        you chose, kept as it was so the cover can be cropped again from it."""
+    def cover_target(self, key: str, ext: str, kind="") -> Path:
+        """Where a cover image for this album is stored in /meta. kind "" is the cover you
+        made, "source" the image you chose (to crop from), "auto" a fetched one."""
+        kind = "source" if kind is True else (kind or "")
         p = self.meta.path_for(key)
-        name = "cover.source" if source else "cover"
+        name = f"cover.{kind}" if kind else "cover"
         if key.startswith("dir:"):
             return p.parent / f"{name}.{ext}"
         return p.with_name(p.name.removesuffix(".album.toml") + f".{name}.{ext}")
 
-    def uploaded_cover(self, key: str, source: bool = False) -> str | None:
+    def uploaded_cover(self, key: str, kind="") -> str | None:
         if not self.meta.enabled:
             return None
         for ext in ("jpg", "png"):
-            p = self.cover_target(key, ext, source)
+            p = self.cover_target(key, ext, kind)
             if p.is_file():
                 return str(p)
         return None
 
-    def _cover(self, meta: dict | None, d: Path, key: str, uploaded: bool = True) -> str | None:
-        """An uploaded cover first, then album.toml's cover = "…", then the rip's own image."""
-        up = self.uploaded_cover(key) if uploaded else None
-        if up:
-            return up
+    def auto_cover(self, key: str) -> str | None:
+        return self.uploaded_cover(key, "auto")
+
+    def _covers(self, meta: dict | None, d: Path, key: str) -> dict:
+        """Every cover image the album has, by origin."""
+        c = {"upload": self.uploaded_cover(key), "auto": self.auto_cover(key)}
         meta_dir = self.meta.path_for(key).parent if self.meta.enabled else None
         wanted = ((meta or {}).get("album", {}) or {}).get("cover")
-        places = [x for x in (meta_dir, d) if x]
         if wanted:
-            for base in places:
-                if (base / wanted).is_file():
-                    return str(base / wanted)
-        for base in (d, meta_dir):
-            if base:
-                for n in COVER_NAMES:
-                    if (base / n).is_file():
-                        return str(base / n)
-        return None
+            c["toml"] = next((str(b / wanted) for b in (meta_dir, d) if b and (b / wanted).is_file()), None)
+        c["rip"] = next((str(b / n) for b in (d, meta_dir) if b for n in COVER_NAMES
+                         if (b / n).is_file()), None)
+        return {k: v for k, v in c.items() if v}
+
+    def cover_order(self) -> list[str]:
+        """Origins in priority order: yours, album.toml's cover = "…", then the sources
+        as ordered on the Settings page (disabled ones left out)."""
+        st = self.settings.covers() if self.settings else {"order": ["rip", "libretro"],
+                                                           "enabled": ["rip", "libretro"]}
+        names = {"rip": "rip", "libretro": "auto"}
+        return ["upload", "toml"] + [names[x] for x in st["order"] if x in st["enabled"] and x in names]
+
+    def apply_covers(self, al: Album):
+        order = self.cover_order()
+        pick = [(o, al.covers[o]) for o in order if o in al.covers]
+        al.cover, al.cover_origin = pick[0][1] if pick else None, ""
+        if pick:
+            al.cover_origin = {"auto": "libretro"}.get(pick[0][0], pick[0][0])
+        rest = [p for o, p in pick if o != "upload"]
+        al.rip_cover = rest[0] if rest else None
+        al.rip_own = al.covers.get("rip")
+
+    def cover_image(self, al: Album, original: bool = False):
+        """(bytes, content type, etag) of the cover as it is served, or None. A cover you
+        made is served as it is; other images are made square as set on the Settings page
+        (crop or pad). original=True: the image to crop from in the cover editor."""
+        path = ((self.uploaded_cover(al.key, "source") or al.rip_cover) if original else al.cover)
+        if not path or not Path(path).is_file():
+            return None
+        p = Path(path)
+        st = p.stat()
+        shape = self.settings.covers()["shape"] if self.settings else "original"
+        if original or al.cover_origin == "upload" or not self.shaper:
+            shape = "original"
+        etag = f'"{int(st.st_mtime)}-{st.st_size}-{shape}"'
+        data = self.shaper.get(path, shape) if shape != "original" else None
+        if data:
+            return data, "image/jpeg", etag
+        return p.read_bytes(), ("image/png" if p.suffix.lower() == ".png" else "image/jpeg"), etag
+
+    def _cover(self, meta: dict | None, d: Path, key: str, uploaded: bool = True) -> str | None:
+        """The cover by the current priority order (kept for callers that want a path)."""
+        a = Album("", key, "", "", "")
+        a.covers = self._covers(meta, d, key)
+        if not uploaded:
+            a.covers.pop("upload", None)
+        self.apply_covers(a)
+        return a.cover
 
     def _album(self, idx, key, meta, f: Path, d: Path, platform: str, fallback: str) -> Album:
         alb = (meta or {}).get("album", {}) or {}
@@ -537,9 +589,9 @@ class Library:
         a = Album(_id("al-", key), key, str(alb.get("title") or fallback),
                   str(alb.get("platform") or platform), _iso(f.stat().st_mtime),
                   meta_artist=str(alb.get("artist") or ""),
-                  year=int(year) if isinstance(year, int) else None,
-                  cover=self._cover(meta, d, key))
-        a.rip_cover = self._cover(meta, d, key, uploaded=False)
+                  year=int(year) if isinstance(year, int) else None)
+        a.covers = self._covers(meta, d, key)
+        self.apply_covers(a)
         a.first_file = str(f.relative_to(self.root))
         idx.albums[a.id] = a
         return a

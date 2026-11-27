@@ -43,7 +43,7 @@ from policy import plan, settings_for, shape
 from subsonic import Subsonic
 from web import WebUI
 
-VERSION = "0.14.1"
+VERSION = "0.15.0"
 BUILD = {"commit": os.environ.get("RETRO_BUILD_COMMIT", "local")[:7],
          "date": os.environ.get("RETRO_BUILD_DATE", "")}
 
@@ -114,7 +114,26 @@ UPD = UpdateCheck(CFG, BUILD)
 from playlists import Playlists  # noqa: E402
 PLAYLISTS = Playlists(META.root if META.enabled else None, META.writable, lambda: LIB.index)
 SUB.playlists = PLAYLISTS
-WEB = WebUI(CFG, LIB, META, CAT, health, probe, JOSHW, playlists=PLAYLISTS, registry=REG)
+from settings import Settings  # noqa: E402
+from covers import CoverFetcher, ShapeCache  # noqa: E402
+SETTINGS = Settings(META.root if META.enabled else None, META.writable)
+LIB.settings = SETTINGS
+LIB.shaper = ShapeCache(META.root / "_cache" / "covers" if META.writable else None)
+COVERS = CoverFetcher(LIB, SETTINGS)
+LIB.after_scan = [COVERS.start]               # fetch covers for new albums
+
+
+def _settings_changed(section, old, new):
+    if section != "covers":
+        return
+    for al in list(LIB.index.albums.values()):   # a new order or source applies at once
+        LIB.apply_covers(al)
+    COVERS.start()
+
+
+SETTINGS.listeners.append(_settings_changed)
+WEB = WebUI(CFG, LIB, META, CAT, health, probe, JOSHW, playlists=PLAYLISTS, registry=REG,
+            settings=SETTINGS, fetcher=COVERS)
 
 
 def wav_header(frames: int, rate: int) -> bytes:
@@ -273,13 +292,13 @@ class Handler(BaseHTTPRequestHandler):
         """Album cover without login, for network players (album ids are not guessable
         paths and only the album's own cover image is served)."""
         al = LIB.index.albums.get(album_id)
-        if al is None or not al.cover or not Path(al.cover).is_file():
+        img = LIB.cover_image(al) if al else None
+        if img is None:
             return self._json({"error": "no cover"}, 404)
-        p = Path(al.cover)
-        data = b"" if head else p.read_bytes()
+        data, ctype, _ = img
         self.send_response(200)
-        self.send_header("Content-Type", "image/png" if p.suffix.lower() == ".png" else "image/jpeg")
-        self.send_header("Content-Length", str(p.stat().st_size))
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         if not head:
             self.wfile.write(data)
