@@ -39,12 +39,17 @@ struct HE : Backend {
         if (image.empty()) die("cannot read the BIOS image %s", o.bios);
         // A full PS2 BIOS (4 MB) is cut down to the modules HE needs; hebios.bin is used as is.
         if (image.size() >= 0x400000) {
-            int size = 0;
+            int size = 0x400000;                 // mkhebios wants exactly one 4 MB image
             void *he = mkhebios_create(image.data(), &size);
-            if (!he || size <= 0) die("%s is not a PS2 BIOS that HE can use", o.bios);
+            if (!he || size <= 0) die("%s is not a PS2 BIOS that HE can use (it was made for a North American one)", o.bios);
             image.assign((uint8_t *)he, (uint8_t *)he + size);
             mkhebios_delete(he);
+        } else if (image.size() < 0x100 || memcmp(&image[0x80], "Highly Experimental", 19) != 0) {
+            // a plain PS1 BIOS (SCPH-1001 etc.) has no HE environment block and cannot be used
+            die("%s is not hebios.bin or a PS2 BIOS (a PS1 BIOS does not work with HE)", o.bios);
         }
+        uint32_t n = (uint32_t)image.size();
+        if (n & (n - 1)) die("%s has the wrong size for a BIOS image", o.bios);
         bios_set_image(image.data(), (uint32_t)image.size());
         if (psx_init()) die("the PS1/PS2 core did not start");
         state.resize(psx_get_state_size(ver));
