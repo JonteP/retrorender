@@ -293,7 +293,7 @@ async function api(path, opts = {}) {
 }
 function toast(msg, err = false) {
   const t = $("#toast"); t.textContent = msg; t.className = "toast show" + (err ? " err" : "");
-  clearTimeout(t._h); t._h = setTimeout(() => (t.className = "toast"), 3500);
+  clearTimeout(t._h); t._h = setTimeout(() => (t.className = "toast"), err ? 9000 : 3500);
 }
 function modal(html, wide = false) {
   $("#modalbox").innerHTML = html; $("#modalbox").classList.toggle("wide", wide); $("#modal").classList.add("show");
@@ -998,9 +998,10 @@ async function playOnline(rid, { pin = false, play = true } = {}) {
   let waited = 0;
   for (let i = 0; i < 1800; i++) {                 // up to an hour for a big rip
     if (r.albums && r.albums.length) {
-      if (play) playList(await albumTracks(r.albums[0].id));
+      const id = r.albums[0].id;
+      if (play) playList(await albumTracks(id));
       else toast(`“${name}” is in the library`);
-      if (location.hash === `#/online/${rid}`) location.hash = "#/album/" + r.albums[0].id;
+      if (location.hash === `#/online/${rid}`) { location.hash = "#/album/" + id; waitForCover(id); }
       return;
     }
     if (r.online.state === "error") return toast(`Download failed: ${r.online.error || ""}`, true);
@@ -1009,15 +1010,26 @@ async function playOnline(rid, { pin = false, play = true } = {}) {
       if (location.hash === `#/online/${rid}`) route();
       return;
     }
-    if (["temporary", "pinned"].includes(r.online.state) && !r.progress && ++waited > 15)
+    // downloaded: the library is re-indexed next, which can take a while on a big library
+    const ready = ["temporary", "pinned"].includes(r.online.state) && !r.progress;
+    if (ready && !r.indexing && ++waited > 3)
       return toast(`“${name}” is downloaded, but no new album appeared: it may be the same as one you already have`, true);
     const p = r.progress;
-    toast(p ? `${p.phase === "downloading" ? "Downloading" : p.phase === "unpacking" ? "Unpacking" : "Indexing"} “${name}”` +
+    toast(ready ? `Indexing the library for “${name}”…`
+      : p ? `${p.phase === "downloading" ? "Downloading" : p.phase === "unpacking" ? "Unpacking" : "Indexing"} “${name}”` +
       (p.phase === "downloading" && p.total ? ` · ${Math.round((100 * p.done) / p.total)}%` : "")
       : r.online.state === "queued" ? `“${name}” is next${r.listing ? ` (after: ${r.listing.replace(/^\S+ /, "")})` : ""}`
       : `Preparing “${name}”…`);
     await new Promise((res) => setTimeout(res, 2000));
     try { r = await api(`online/${rid}`); } catch (e) { /* try again */ }
+  }
+}
+// a new download gets its cover a little after it is indexed: show it when it comes
+async function waitForCover(id) {
+  for (let i = 0; i < 20; i++) {
+    await new Promise((res) => setTimeout(res, 3000));
+    if (location.hash !== "#/album/" + id) return;
+    try { if ((await api("album/" + encodeURIComponent(id))).cover) return route(); } catch (e) { return; }
   }
 }
 const albumTracks = (id) => api("tracks?album=" + encodeURIComponent(id)).then((r) => r.songs);

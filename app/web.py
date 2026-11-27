@@ -844,6 +844,7 @@ class WebUI:
                  albums=self._albums_under(r["local_dir"]) if r["local_dir"] else [],
                  progress=o.current if o.current and o.current.get("id") == rid else None,
                  queued=o.fetches.qsize(), lists=o.jobs.qsize(),
+                 indexing=bool(getattr(self.lib, "busy", False)),
                  listing=o.log[-1] if o._listing and o.log else "")
         return h._json(d) or True
 
