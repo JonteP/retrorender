@@ -183,6 +183,20 @@
   select.sort { padding: 7px 10px; color: var(--text); background: var(--panel2); border: 1px solid var(--line);
     border-radius: 8px; font: inherit; }
   tr[draggable] td:first-child { cursor: grab; }
+  tr.disc td { padding-top: 18px; font-weight: 600; color: var(--accent); border-bottom: 1px solid var(--line); }
+  .cstage { position: relative; display: inline-block; max-width: 100%; user-select: none; }
+  .cstage img { display: block; max-width: 100%; max-height: 62vh; }
+  .cbox { position: absolute; border: 2px solid var(--accent); box-shadow: 0 0 0 9999px rgba(0,0,0,.55);
+    cursor: move; touch-action: none; }
+  .cbox[hidden] { display: none; }
+  .cbox i { position: absolute; width: 14px; height: 14px; background: var(--accent); border-radius: 3px; }
+  .cbox i[data-h=nw] { left: -1px; top: -1px; cursor: nwse-resize; }
+  .cbox i[data-h=ne] { right: -1px; top: -1px; cursor: nesw-resize; }
+  .cbox i[data-h=sw] { left: -1px; bottom: -1px; cursor: nesw-resize; }
+  .cbox i[data-h=se] { right: -1px; bottom: -1px; cursor: nwse-resize; }
+  .cstage { overflow: hidden; }
+  body.fitcovers .cover, body.fitcovers .thumb, body.fitcovers .nowcover, body.fitcovers .mosaic div {
+    background-size: contain; background-repeat: no-repeat; }
   tr.drop td { box-shadow: inset 0 2px 0 var(--accent); }
   @media (max-width: 860px) {
     .lib, .ahead, .two { grid-template-columns: 1fr; }
@@ -846,6 +860,8 @@ async function viewLibrary(v, q) {
           <select class="sort" id="sort" title="Sort albums">
             ${[["", "Console, title"], ["name", "Title"], ["year", "Year"], ["added", "Recently added"]]
               .map(([k, l]) => `<option value="${k}" ${(q.get("sort") || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select>
+          <select class="sort" id="coverfit" title="How covers that are not square are shown">
+            <option value="fill">Covers: fill</option><option value="fit" ${store.get("coverfit", "fill") === "fit" ? "selected" : ""}>Covers: whole image</option></select>
           ${filtered ? `<a class="link" href="#/library">Clear filters</a>` : ""}
         </div>
       </div>
@@ -862,6 +878,7 @@ async function viewLibrary(v, q) {
     if (val) p.set("q", val); else p.delete("q");
     location.hash = "#/library" + (p.toString() ? "?" + p : "");
   };
+  $("#coverfit").onchange = (e) => { store.set("coverfit", e.target.value); document.body.classList.toggle("fitcovers", e.target.value === "fit"); };
   $("#sort").onchange = (e) => (location.hash = link("sort", e.target.value || null));
   const listArtists = () => {
     const f = $("#afilter").value.trim().toLowerCase();
@@ -899,7 +916,9 @@ document.addEventListener("click", async (e) => {      // ▶ on an album cover
 function trackTable(tracks, opts = {}) {
   return `<table><thead><tr><th></th>${opts.album ? "" : "<th>#</th>"}<th>Title</th>${opts.album ? "<th>Album</th>" : "<th>Engine</th>"}
       <th style="text-align:right">Length</th><th></th></tr></thead>
-    <tbody>${tracks.map((t, i) => `<tr data-id="${t.id}" data-i="${i}" class="${t.id === playingId ? "playing" : ""}" ${opts.drag ? 'draggable="true"' : ""}>
+    <tbody>${tracks.map((t, i) => `${opts.discs && opts.discs.length > 1 && (i === 0 || tracks[i - 1].disc !== t.disc)
+      ? `<tr class="disc"><td></td><td colspan="5">${esc((opts.discs.find((d) => d.disc === t.disc) || {}).label || "Disc " + t.disc)}
+          <span class="muted">· ${tracks.filter((x) => x.disc === t.disc).length} tracks</span></td></tr>` : ""}<tr data-id="${t.id}" data-i="${i}" class="${t.id === playingId ? "playing" : ""}" ${opts.drag ? 'draggable="true"' : ""}>
       <td style="width:40px"><button class="play" data-play="${i}" title="Play">▶</button></td>
       ${opts.album ? "" : `<td class="num">${opts.drag ? i + 1 : t.track}</td>`}
       <td><span class="ttl">${esc(t.title)}</span>${opts.album || (t.artist && t.artist !== opts.albumArtist) ? `<div class="muted">${esc(t.artist)}</div>` : ""}</td>
@@ -927,8 +946,7 @@ async function viewAlbum(v, id) {
         <div class="cover" id="acover" ${a.cover ? `style="background-image:url('${coverUrl(a.id)}?t=${Date.now()}')"` : ""}>
           ${a.cover ? "" : `<div class="ph">${esc(a.platform)}<br><b>${esc(initials(a.name))}</b></div>`}</div>
         ${a.writable ? `<div class="row" style="margin-top:8px">
-          <label class="button" style="padding:4px 10px;font-size:13px">Change cover…<input type="file" id="coverFile" accept="image/jpeg,image/png" hidden></label>
-          ${a.cover_uploaded ? `<button id="coverDel" style="padding:4px 10px;font-size:13px" title="Use the rip's own image again">Remove</button>` : ""}</div>` : ""}
+          <button id="coverEdit" style="padding:4px 10px;font-size:13px">${a.cover ? "Edit cover…" : "Add cover…"}</button></div>` : ""}
       </div>
       <div>
         <p class="muted" style="margin:0"><a class="link" href="#/library?platform=${encodeURIComponent(a.platform)}">${esc(a.platform)}</a>${a.year ? ` · <a class="link" href="#/library?year=${a.year}">${a.year}</a>` : ""}</p>
@@ -947,77 +965,175 @@ async function viewAlbum(v, id) {
         <p class="mono muted">${esc(a.game_key)}</p>
       </div>
     </div>
-    <section class="card"><h2>Tracks</h2>${trackTable(a.tracks, { albumArtist })}</section>`;
+    <section class="card"><h2>Tracks</h2>${trackTable(a.tracks, { albumArtist, discs: a.discs })}</section>`;
   bindTracks(v, a.tracks);
   $("#aPlay").onclick = () => playList(a.tracks);
   $("#aShuffle").onclick = () => playList(shuffleArr(a.tracks.slice()));
   $("#aQueue").onclick = () => enqueue(a.tracks);
   $("#aMore").onclick = (e) => menu(e, [...trackItems(() => a.tracks).filter((_, i) => i === 1 || i === 3), "-",
+    ["Edit cover…", () => editCover(a)],
     ["Edit album.toml…", () => editToml(a)], ["Edit title map…", () => editTitles(a)],
-    ["Export !tags.m3u", () => { location.href = `/api/album/${a.id}/tags.m3u`; }],
+    ...a.parts.map((p, i) => [`Export !tags.m3u${a.parts.length > 1 ? ` (${p.label || "part " + (i + 1)})` : ""}`,
+      () => { location.href = `/api/album/${a.id}/tags.m3u?part=${i}`; }]),
     ["Regenerate album.toml…", () => regenerateAlbum(a)]]);
-  if ($("#coverFile")) $("#coverFile").onchange = async (e) => {
-    const f = e.target.files[0];
-    if (!f) return;
-    try {
-      await api(`album/${a.id}/cover`, { method: "POST", headers: { "Content-Type": f.type }, body: f });
-      toast("Cover saved"); route();
-    } catch (err) { toast(err.message, true); }
-  };
-  if ($("#coverDel")) $("#coverDel").onclick = async () => {
-    try { await api(`album/${a.id}/cover/delete`, { method: "POST" }); toast("Uploaded cover removed"); setTimeout(route, 800); }
-    catch (err) { toast(err.message, true); }
-  };
+  if ($("#coverEdit")) $("#coverEdit").onclick = () => editCover(a);
 }
 
-// album.toml and the title map, opened from the album's ⋯ menu
-function editToml(a) {
+// album.toml and the title map, opened from the album's ⋯ menu. An album made of parts
+// (e.g. streamed + sequenced) has one file per part; a selector switches between them.
+function partSelect(a, i, fn) {
+  if (a.parts.length < 2) return "";
+  setTimeout(() => { const s = $("#partSel"); if (s) s.onchange = () => fn(a, +s.value); });
+  return `<select class="sort" id="partSel" title="Part of the album">${a.parts.map((p, n) =>
+    `<option value="${n}" ${n === i ? "selected" : ""}>${esc(p.label || "Part " + (n + 1))} · ${p.songs} tracks</option>`).join("")}</select>`;
+}
+function editToml(a, i = 0) {
+  const p = a.parts[i];
   const stateChip = { untouched: ["ok", "generated, untouched"], edited: ["warn", "edited by hand"],
-    legacy: ["warn", "older version"], missing: ["bad", "missing"] }[a.toml_state];
+    legacy: ["warn", "older version"], missing: ["bad", "missing"] }[p.toml_state];
   modal(`<div class="row" style="justify-content:space-between"><h1>album.toml</h1>
-      <span class="chip ${stateChip[0]}">${stateChip[1]}</span></div>
-    <p class="mono muted">${esc(a.toml_path || "")}</p>
-    <textarea id="toml" spellcheck="false" wrap="off" style="min-height:55vh" ${a.writable ? "" : "readonly"}>${esc(a.toml)}</textarea>
+      <div class="row">${partSelect(a, i, editToml)}<span class="chip ${stateChip[0]}">${stateChip[1]}</span></div></div>
+    <p class="mono muted">${esc(p.toml_path || "")}</p>
+    <textarea id="toml" spellcheck="false" wrap="off" style="min-height:55vh" ${a.writable ? "" : "readonly"}>${esc(p.toml)}</textarea>
     <p class="muted">Saving marks the file as edited, so it is never overwritten automatically.</p>
     <div class="row" style="justify-content:flex-end">
       <button onclick="closeModal()">Cancel</button>
       <button class="primary" id="save" ${a.writable ? "" : "disabled"}>Save</button></div>`, true);
   $("#save").onclick = async () => {
     try {
-      await api(`album/${a.id}/toml`, { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" },
+      await api(`album/${a.id}/toml?part=${i}`, { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" },
         body: $("#toml").value });
       closeModal(); toast("Saved; re-indexing"); setTimeout(route, 1200);
     } catch (e) { toast(e.message, true); }
   };
 }
-function editTitles(a) {
-  modal(`<h1>Title map</h1>
-    <p class="muted">${a.titles_builtin ? `Built-in map in use: <span class="mono">${esc(a.titles_builtin)}</span>. ` : ""}
-      Titles here (per internal file name) win over the rip's own !tags.m3u, ${a.titles_builtin ? "the built-in map, " : ""}tags and file names.
+function editTitles(a, i = 0) {
+  const p = a.parts[i];
+  modal(`<div class="row" style="justify-content:space-between"><h1>Title map</h1>${partSelect(a, i, editTitles)}</div>
+    <p class="muted">${p.titles_builtin ? `Built-in map in use: <span class="mono">${esc(p.titles_builtin)}</span>. ` : ""}
+      Titles here (per internal file name) win over the rip's own !tags.m3u, ${p.titles_builtin ? "the built-in map, " : ""}tags and file names.
       Empty values are ignored. “Rename…” on a track writes here too.</p>
-    <textarea id="titles" spellcheck="false" wrap="off" style="min-height:50vh" ${a.writable ? "" : "readonly"}>${esc(a.titles || a.titles_template)}</textarea>
+    <textarea id="titles" spellcheck="false" wrap="off" style="min-height:50vh" ${a.writable ? "" : "readonly"}>${esc(p.titles || p.titles_template)}</textarea>
     <div class="row" style="justify-content:flex-end;margin-top:12px">
       <button onclick="closeModal()">Cancel</button>
       <button class="primary" id="saveTitles" ${a.writable ? "" : "disabled"}>Save titles</button></div>`, true);
   $("#saveTitles").onclick = async () => {
     try {
-      const r = await api(`album/${a.id}/titles`, { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" },
+      const r = await api(`album/${a.id}/titles?part=${i}`, { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" },
         body: $("#titles").value });
       closeModal(); toast(r.message, r.edited); setTimeout(route, 1500);
     } catch (e) { toast(e.message, true); }
   };
 }
-function regenerateAlbum(a) {
-  modal(`<h1>Regenerate album.toml?</h1>
+function regenerateAlbum(a, i = 0) {
+  const p = a.parts[i];
+  modal(`<div class="row" style="justify-content:space-between"><h1>Regenerate album.toml?</h1>${partSelect(a, i, regenerateAlbum)}</div>
     <p>A fresh file is generated from tags, playlists, your title map and file names.</p>
-    ${a.toml_state === "edited" || a.toml_state === "legacy" ? `<div class="warnbox">This file has been edited.
+    ${p.toml_state === "edited" || p.toml_state === "legacy" ? `<div class="warnbox">This file has been edited.
       Your version is moved to <span class="mono">/meta/.backup/</span> and stops applying.</div>` : ""}
     <div class="row" style="justify-content:flex-end;margin-top:16px">
       <button onclick="closeModal()">Cancel</button><button class="danger" id="go">Regenerate</button></div>`);
   $("#go").onclick = async () => {
-    try { await api(`album/${a.id}/regenerate`, { method: "POST" }); closeModal();
+    try { await api(`album/${a.id}/regenerate?part=${i}`, { method: "POST" }); closeModal();
       toast("Regenerated; re-indexing"); setTimeout(route, 1200);
     } catch (e) { closeModal(); toast(e.message, true); }
+  };
+}
+
+// --- cover editor: crop a part of the image, or show all of it with padding ----------------
+// The result is made in the browser and uploaded like any cover, so TVs and Subsonic apps
+// get the same picture. The rip's own image is never changed.
+function editCover(a, file = null) {
+  const img = new Image();
+  let mode = "crop", square = true, box = null;          // box: crop rect in image pixels
+  const src = file ? URL.createObjectURL(file) : a.rip_cover ? `${coverUrl(a.id)}?original=1` : a.cover ? coverUrl(a.id) : null;
+  modal(`<div class="row" style="justify-content:space-between"><h1>Cover</h1>
+      <label class="button">Choose image…<input type="file" id="cfile" accept="image/jpeg,image/png,image/webp" hidden></label></div>
+    ${src ? `<div class="row" style="margin:8px 0 12px">
+        <label><input type="radio" name="cmode" value="crop" checked> Crop</label>
+        <label><input type="radio" name="cmode" value="fit"> Show the whole image (padding)</label>
+        <label id="sqwrap"><input type="checkbox" id="csq" checked> Square</label>
+        <span class="muted" id="cinfo"></span></div>
+      <div class="cstage" id="cstage"><img id="cimg" alt=""><div class="cbox" id="cbox"><i data-h="nw"></i><i data-h="ne"></i><i data-h="sw"></i><i data-h="se"></i></div></div>`
+      : `<p class="muted">This album has no cover yet. Choose an image.</p>`}
+    <div class="row" style="justify-content:space-between;margin-top:14px">
+      <div>${a.cover_uploaded ? `<button id="cdel" title="Remove your cover and use the rip's own image (if any)">Use the rip's own</button>` : ""}</div>
+      <div class="row"><button onclick="closeModal()">Cancel</button>
+        <button class="primary" id="csave" ${src ? "" : "disabled"}>Save cover</button></div></div>`, true);
+  $("#cfile").onchange = (e) => { if (e.target.files[0]) editCover(a, e.target.files[0]); };
+  if ($("#cdel")) $("#cdel").onclick = async () => {
+    try { await api(`album/${a.id}/cover/delete`, { method: "POST" }); closeModal(); toast("Using the rip's own cover"); setTimeout(route, 800); }
+    catch (err) { toast(err.message, true); }
+  };
+  if (!src) return;
+  const stage = $("#cstage"), el = $("#cimg"), cb = $("#cbox");
+  const scale = () => el.clientWidth / img.naturalWidth;
+  const clamp = () => {
+    const W = img.naturalWidth, H = img.naturalHeight;
+    box.w = Math.max(16, Math.min(box.w, W)); box.h = Math.max(16, Math.min(box.h, H));
+    if (square) box.w = box.h = Math.min(box.w, box.h);
+    box.x = Math.max(0, Math.min(box.x, W - box.w)); box.y = Math.max(0, Math.min(box.y, H - box.h));
+  };
+  const draw = () => {
+    const k = scale();
+    cb.hidden = mode !== "crop";
+    $("#sqwrap").style.visibility = mode === "crop" ? "visible" : "hidden";
+    Object.assign(cb.style, { left: box.x * k + "px", top: box.y * k + "px", width: box.w * k + "px", height: box.h * k + "px" });
+    $("#cinfo").textContent = mode === "crop" ? `${Math.round(box.w)} × ${Math.round(box.h)} px` :
+      `${img.naturalWidth} × ${img.naturalHeight} px, padded to a square`;
+  };
+  img.onload = () => {
+    el.src = img.src;
+    const W = img.naturalWidth, H = img.naturalHeight, s = Math.min(W, H);
+    // a wide image (e.g. a whole case scan): start with the right-hand square, the front
+    box = W > H * 1.3 ? { x: W - s, y: 0, w: s, h: s } : { x: (W - s) / 2, y: (H - s) / 2, w: s, h: s };
+    el.onload = draw; if (el.complete) draw();
+  };
+  img.onerror = () => toast("Could not load the image", true);
+  img.src = src;
+  document.querySelectorAll("[name=cmode]").forEach((r) => (r.onchange = () => { mode = r.value; draw(); }));
+  $("#csq").onchange = (e) => { square = e.target.checked; clamp(); draw(); };
+  // drag the box to move it, drag a corner to resize
+  let drag = null;
+  cb.addEventListener("pointerdown", (e) => {
+    e.preventDefault(); cb.setPointerCapture(e.pointerId);
+    drag = { h: e.target.dataset.h || "move", x: e.clientX, y: e.clientY, b: { ...box } };
+  });
+  cb.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const k = scale(), dx = (e.clientX - drag.x) / k, dy = (e.clientY - drag.y) / k, b = drag.b;
+    if (drag.h === "move") { box.x = b.x + dx; box.y = b.y + dy; }
+    else {
+      let d = { x: drag.h.includes("w") ? dx : 0, y: drag.h.includes("n") ? dy : 0 };
+      let w = b.w + (drag.h.includes("e") ? dx : -dx), h = b.h + (drag.h.includes("s") ? dy : -dy);
+      if (square) { w = h = Math.max(w, h); d = { x: drag.h.includes("w") ? b.w - w : 0, y: drag.h.includes("n") ? b.h - h : 0 }; }
+      box = { x: b.x + d.x, y: b.y + d.y, w, h };
+    }
+    clamp(); draw();
+  });
+  cb.addEventListener("pointerup", () => (drag = null));
+  window.addEventListener("resize", () => box && draw());
+  $("#csave").onclick = async () => {
+    const MAX = 1200, c = document.createElement("canvas"), g = c.getContext("2d");
+    const W = img.naturalWidth, H = img.naturalHeight;
+    if (mode === "crop") {
+      const k = Math.min(1, MAX / Math.max(box.w, box.h));
+      c.width = Math.round(box.w * k); c.height = Math.round(box.h * k);
+      g.drawImage(img, box.x, box.y, box.w, box.h, 0, 0, c.width, c.height);
+    } else {
+      const side = Math.min(MAX, Math.max(W, H)), k = side / Math.max(W, H);
+      c.width = c.height = side;
+      g.filter = "blur(24px) brightness(0.55)";               // the image itself, blurred, behind it
+      const kb = side / Math.min(W, H);
+      g.drawImage(img, (side - W * kb) / 2, (side - H * kb) / 2, W * kb, H * kb);
+      g.filter = "none";
+      g.drawImage(img, (side - W * k) / 2, (side - H * k) / 2, W * k, H * k);
+    }
+    const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.92));
+    try {
+      await api(`album/${a.id}/cover`, { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: blob });
+      closeModal(); toast("Cover saved"); route();
+    } catch (err) { toast(err.message, true); }
   };
 }
 
@@ -1245,6 +1361,7 @@ async function refreshVersion() {
 }
 refreshVersion();
 setInterval(() => { if (!document.hidden) refreshVersion(); }, 60000);
+document.body.classList.toggle("fitcovers", store.get("coverfit", "fill") === "fit");
 restoreQueue();
 route();
 loadDevices();

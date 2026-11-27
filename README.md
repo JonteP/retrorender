@@ -101,9 +101,17 @@ orörd. För delspår i en fil heter nyckeln `namn#2`, t.ex. `"jaiseqs#12" = "Dr
 Spelaren längst ner spelar i webbläsaren eller på en apparat i nätet. Play på en låt köar
 resten av albumet. Mellanslag pausar och spelar.
 
-**Omslag:** en uppladdad bild (JPEG/PNG) sparas i `/meta` bredvid album.toml
-(`cover.jpg`, eller `<fil>.cover.jpg` för album i en enda fil) och går före rippens egen.
-"Remove" tar bort den uppladdade bilden.
+**Omslag:** "Edit cover…" beskär en del av bilden (t.ex. bara framsidan av en
+fodralskanning) eller visar hela bilden med utfyllnad till en kvadrat. Resultatet sparas som
+en egen bild i `/meta` bredvid album.toml (`cover.jpg`, eller `<fil>.cover.jpg` för album i
+en enda fil) och går före rippens egen, som aldrig ändras. "Use the rip's own" tar bort den.
+"Covers: fill / whole image" i biblioteket väljer hur icke-kvadratiska omslag visas.
+
+**Album i flera delar:** ett spel vars ljud ligger i undermappar, som Wind Wakers `Stream/`
+och `Seqs/` eller Galaxys AST-filer och `Seqs/`, visas som ett album med en del per mapp
+("Streamed", "Sequenced"). Delarna behåller var sin album.toml och titelkarta; redigeringen
+har en väljare för delen. Gäller syncade rippar (mappen med `.source.json`) och undermappar
+som heter Stream, Seqs, BMS och liknande. `merge_parts = false` stänger av det.
 
 ## Kö och spellistor
 
