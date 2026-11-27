@@ -356,9 +356,8 @@ assert fetcher.auto_info(tetris.key)["type"] == "title"
 settings.update("covers", {"libretro_type": "boxart", "album_regions": {tetris.key: "Japan"}})
 assert fetcher.refetch(tetris) and fetcher.auto_info(tetris.key)["name"] == "Tetris (Japan)"
 r1 = lib.cover_rev(tetris)
-n = len(calls)
 fetcher.run_once(refresh=True)           # "Search all again": fetched covers too
-assert len(calls) > n and fetcher.auto_info(tetris.key)["name"] == "Tetris (Japan)"
+assert fetcher.status["found"] >= 2 and fetcher.auto_info(tetris.key)["name"] == "Tetris (Japan)"
 settings.update("covers", {"order": ["rip", "libretro"], "enabled": ["rip"]})
 lib.apply_covers(tetris)
 assert tetris.cover is None              # libretro switched off
