@@ -386,4 +386,19 @@ except ImportError:
 assert lib.cover_image(tetris, original=True)[1] == "image/png"      # the editor gets it as it is
 lib.settings = lib.shaper = None
 
+# a scan requested while one runs (a download landing mid-scan) runs once more afterwards
+settle()
+runs = []
+real_once = lib._scan_once
+def once():
+    runs.append(1)
+    if len(runs) == 1:
+        lib.scan()                    # arrives during the scan: must not be dropped
+        assert lib.busy
+    real_once()
+lib._scan_once = once
+lib.scan()
+assert len(runs) == 2 and not lib.busy, runs
+lib._scan_once = real_once
+
 print("library, policy, web API, playlists, Subsonic and covers: ok")

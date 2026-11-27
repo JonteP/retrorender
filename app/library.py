@@ -171,6 +171,7 @@ class Library:
         self._hashing = False
         self.index = Index()
         self.scanning = False
+        self.rescan_pending = False
         self.count = 0
         self._lock = threading.Lock()
 
@@ -235,8 +236,24 @@ class Library:
         threading.Thread(target=loop, daemon=True, name="library-scan").start()
 
     def scan(self):
+        """Re-index. A request during a running scan is not lost: that scan runs once more
+        when it is done, so a download that lands mid-scan is always picked up."""
+        self.rescan_pending = True
         if not self._lock.acquire(blocking=False):
             return
+        try:
+            while self.rescan_pending:
+                self.rescan_pending = False
+                self._scan_once()
+        finally:
+            self._lock.release()
+
+    @property
+    def busy(self) -> bool:
+        """Indexing now, or about to."""
+        return self.scanning or self.rescan_pending
+
+    def _scan_once(self):
         self.scanning, self.count = True, 0
         t0 = time.time()
         try:
@@ -269,7 +286,6 @@ class Library:
             log.exception("indexing failed")
         finally:
             self.scanning = False
-            self._lock.release()
 
     def _start_hashing(self):
         """Hash new files in the background; rescan once if that reveals duplicates."""
