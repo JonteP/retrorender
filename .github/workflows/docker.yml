@@ -12,6 +12,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Two merges in quick succession start two runs; the older one must not finish last and
+# publish an older "latest". A newer run on the same branch cancels the older one.
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   packages: write
