@@ -57,19 +57,35 @@ def _key(k: str) -> str:
     return k if k.replace("_", "").replace("-", "").isalnum() else json.dumps(k, ensure_ascii=False)
 
 
+def _table(out: list, name: str, vals: dict):
+    """A TOML table and, after it, its sub-tables (any depth)."""
+    out.append(f"[{name}]")
+    out += [f"{_key(k)} = {_tv(v)}" for k, v in vals.items() if not isinstance(v, dict)]
+    out.append("")
+    for k, v in vals.items():
+        if isinstance(v, dict):
+            _table(out, f"{name}.{_key(k)}", v)
+
+
 def dumps(data: dict) -> str:
     out = [HEADER]
     for section, vals in data.items():
-        simple = {k: v for k, v in vals.items() if not isinstance(v, dict)}
-        tables = {k: v for k, v in vals.items() if isinstance(v, dict)}
-        out.append(f"[{section}]")
-        out += [f"{_key(k)} = {_tv(v)}" for k, v in simple.items()]
-        out.append("")
-        for k, t in tables.items():
-            out.append(f"[{section}.{_key(k)}]")
-            out += [f"{_key(a)} = {_tv(b)}" for a, b in t.items()]
-            out.append("")
+        _table(out, _key(section), vals)
     return "\n".join(out)
+
+
+def _repair(v):
+    """0.16.0–0.16.2 wrote nested tables as a Python dict in a string; read those back."""
+    if isinstance(v, dict):
+        return {k: _repair(x) for k, x in v.items()}
+    if isinstance(v, str) and v.startswith("{") and v.endswith("}"):
+        import ast
+        try:
+            x = ast.literal_eval(v)
+            return _repair(x) if isinstance(x, dict) else v
+        except (ValueError, SyntaxError):
+            return v
+    return v
 
 
 class Settings:
@@ -90,7 +106,7 @@ class Settings:
                 user = {}
             for sec, vals in user.items():
                 if isinstance(vals, dict):
-                    data.setdefault(sec, {}).update(vals)
+                    data.setdefault(sec, {}).update(_repair(vals))
         return data
 
     def get(self, section: str) -> dict:
