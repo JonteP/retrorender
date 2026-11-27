@@ -18,7 +18,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fixtures  # noqa: E402
 
-EXPECT = {"tone.gsf": 440, "tone.minigsf": 880, "tone.ssf": 441, "tone.dsf": 441, "tone.2sf": 440}
+EXPECT = {"tone.gsf": 440, "tone.minigsf": 880, "tone.ssf": 441, "tone.dsf": 441, "tone.2sf": 440,
+          "tone.psf": 787.5, "tone.minipsf": 1575}
 
 
 def pitch(samples: array.array, rate: int) -> float:
@@ -38,7 +39,9 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         files = fixtures.write_all(Path(tmp))
         for name, want in EXPECT.items():
-            r = subprocess.run([cli, "-n", "44100", str(files[name])], capture_output=True, timeout=120)
+            extra = ["-b", str(files["test-hebios.bin"])] if "psf" in name else []
+            r = subprocess.run([cli, "-n", "44100", *extra, str(files[name])], capture_output=True,
+                               timeout=120)
             data = r.stdout
             if r.returncode != 0 or len(data) <= 44:
                 print(f"FAIL {name}: {r.stderr.decode(errors='replace').strip()}")

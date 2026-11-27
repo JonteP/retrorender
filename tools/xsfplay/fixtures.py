@@ -9,6 +9,9 @@ writes:
   tone.ssf                Saturn: one SCSP slot looping a 16-bit square wave, 441 Hz
   tone.dsf                Dreamcast: the same on the AICA, driven by the ARM7
   tone.2sf                DS: PSG channel 8, square wave, ~440 Hz
+  tone.psf                PS1: SPU voice 0 loops a square wave, 787.5 Hz
+  tone.minipsf + tone.psflib   the same with the pitch doubled by the minipsf
+  test-hebios.bin         a stand-in BIOS for HE (no Sony code), for the two above
 
 Each program only writes a few sound registers and then loops forever; they are not
 derived from any game. The machine code is written out by hand below.
@@ -139,6 +142,56 @@ def dsf_program() -> bytes:
     return struct.pack("<I", 0) + bytes(ram)
 
 
+# ------------------------------------------------------------------ PlayStation
+
+def psx_exe(text: bytes, addr: int = 0x80010000, pc: int = 0x80010000,
+            sp: int = 0x801FFF00) -> bytes:
+    h = bytearray(0x800)
+    h[0:8] = b"PS-X EXE"
+    struct.pack_into("<IIII", h, 0x10, pc, 0, addr, len(text))
+    struct.pack_into("<I", h, 0x30, sp)
+    h[0x4C:0x4C + 55] = b"Sony Computer Entertainment Inc. for North America area"
+    return bytes(h) + text
+
+
+PSX_PITCH_AT = 0x80010004                  # the "ori" that loads the pitch (see psx_program)
+
+
+def psx_program(pitch: int = 0x1000) -> bytes:
+    """MIPS: two ADPCM blocks (a square wave, 56 samples) into SPU RAM by manual transfer,
+    voice 0 loops them; pitch 0x1000 = 44100 samples/s, so 787.5 Hz."""
+    ins = [0x3C081F80]                      # lui t0, 0x1F80
+
+    def sh(off: int, val: int) -> None:     # ori t1, zero, val ; sh t1, off(t0)
+        ins.extend([0x34090000 | val, 0xA5090000 | off])
+    sh(0x1C04, pitch)                       # voice 0 pitch (patched by the minipsf test)
+    sh(0x1DAA, 0xC000)                      # SPU on, unmuted
+    sh(0x1D80, 0x3FFF)
+    sh(0x1D82, 0x3FFF)                      # main volume
+    sh(0x1DA6, 0x1000 >> 3)                 # transfer address
+    blocks = bytes([0x00, 0x04] + [0x77] * 14 + [0x00, 0x03] + [0x99] * 14)
+    for i in range(0, len(blocks), 2):
+        sh(0x1DA8, blocks[i] | blocks[i + 1] << 8)
+    sh(0x1C00, 0x3FFF)
+    sh(0x1C02, 0x3FFF)                      # voice volume
+    sh(0x1C06, 0x1000 >> 3)                 # start address
+    sh(0x1C08, 0x000F)                      # fastest attack, full sustain level
+    sh(0x1C0A, 0x0000)
+    sh(0x1D88, 0x0001)                      # key on voice 0
+    ins += [0x1000FFFF, 0x00000000]         # b . ; nop
+    return words(*ins)
+
+
+def test_bios() -> bytes:
+    """Stand-in for hebios.bin: only HE's environment block and an invalid instruction at
+    the reset vector, so the core skips the boot. No Sony code; enough for a bare program."""
+    rom = bytearray(0x80000)
+    rom[0:4] = words(0xFFFFFFFF)
+    env = b"Highly Experimental ps1preboot=00000100 ps2preboot=00000100"
+    rom[0x80:0x80 + len(env)] = env
+    return bytes(rom)
+
+
 # ------------------------------------------------------------------ DS
 
 def nds_rom() -> bytes:
@@ -187,6 +240,12 @@ def write_all(out: Path) -> dict[str, Path]:
         "tone.ssf": psf(0x11, ssf_program(), tags),
         "tone.dsf": psf(0x12, dsf_program(), tags),
         "tone.2sf": psf(0x24, ds_program(nds_rom()), tags),
+        "tone.psf": psf(0x01, psx_exe(psx_program()), tags),
+        "tone.psflib": psf(0x01, psx_exe(psx_program())),
+        # a minipsf header with a useless PC, as rips have: PC/SP must come from the _lib
+        "tone.minipsf": psf(0x01, psx_exe(words(0x34092000), addr=PSX_PITCH_AT, pc=0x1F000000, sp=0),
+                            {**tags, "_lib": "tone.psflib", "title": "Test tone 1575"}),
+        "test-hebios.bin": test_bios(),
     }
     paths = {}
     for name, data in files.items():

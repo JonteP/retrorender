@@ -16,7 +16,7 @@
 //   -n  stop after this many frames (default: run until stdout closes)
 //   -b  HE BIOS image (hebios.bin, or a PS2 BIOS that is converted on the fly)
 //   -t  print timing and the native rate to stderr when done (for benchmarks)
-//   -c  PS1/PS2 DMA timing: harsh (default, like the hardware) or friendly
+//   -c  PS1/PS2 DMA timing: friendly (default, what rips are made for) or harsh
 //   -j  DS: use DeSmuME's JIT instead of the interpreter (faster, slightly less exact)
 //   -I  print the PSF version byte and exit
 //
@@ -108,7 +108,7 @@ int main(int argc, char **argv) {
         case 'n': limit = atoll(optarg); break;
         case 'b': o.bios = optarg; break;
         case 't': timing = true; break;
-        case 'c': o.harsh = strcmp(optarg, "friendly") != 0; break;
+        case 'c': o.harsh = strcmp(optarg, "harsh") == 0; break;
         case 'I': ident = true; break;
         case 'j': o.jit = true; break;
         default: return 2;
