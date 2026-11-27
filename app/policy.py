@@ -57,7 +57,9 @@ def plan(track: TrackInfo, s: dict) -> Plan:
         if track.length_s > mx:
             return Plan(mx, min(s["fade_s"], mx / 2), f"fixed length cut to max {mx:g}s")
         if (track.extra or {}).get("fade_at_end"):
-            return Plan(track.length_s, min(s["fade_s"], track.length_s / 2),
+            # the file's own fade (xSF tags, album.toml) wins over the general setting
+            fade = float(track.extra.get("fade_s", s["fade_s"]))
+            return Plan(track.length_s, min(fade, track.length_s / 2),
                         "fixed length with a fade at the end")
         return Plan(track.length_s, 0.0, "fixed length")
     t = min(max(s["default_s"], 0), mx) if mx > 0 else s["default_s"]

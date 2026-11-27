@@ -33,7 +33,7 @@ jobs:
       - name: Libraries used by the engines
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgme0 libopenmpt0
+          sudo apt-get install -y --no-install-recommends libgme0 libopenmpt0 ffmpeg
           pip install numpy pillow
       - name: Tests
         run: |
@@ -43,6 +43,7 @@ jobs:
           python tests/test_updates.py
           python tests/test_library.py
           python tests/test_online.py
+          python tests/test_xsf.py
       - name: Compile all modules
         run: python -m compileall -q app tests
 

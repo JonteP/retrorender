@@ -30,6 +30,7 @@ Chromecast/DLNA-apparater i nätet (TV, nätverkshögtalare) eller via Subsonic-
 | libopenmpt | MOD, XM, IT, S3M, MPTM och ett 30-tal till |
 | vgmstream | ADX, HCA, BRSTM/BCSTM, AFC, AST, DSP, WEM, TXTP och hundratals till |
 | sidplayfp | SID (längder från HVSC:s Songlengths.md5, namn från STIL.txt) |
+| xsfplay (egen) | xSF: PSF/PSF2 (PS1/PS2), SSF (Saturn), DSF (Dreamcast), USF (N64), GSF (GBA), 2SF (DS), med minifiler och `_lib` |
 | jaudio (egen) | Sekvenserad GameCube/Wii-musik: JAudio2 `.bms` + `.baa` (Super Mario Galaxy, Twilight Princess) och JAudio 1 `JaiSeqs.arc` + `JaiInit.aaf` (The Wind Waker) |
 
 **VGM/VGZ** går till libgme om filen bara använder Segas chip (SN76489, YM2413, YM2612),
@@ -44,6 +45,28 @@ föräldramappen eller en syskonmapp. Loopar läses exakt ur sekvensen. Ekot är
 bana, så här styrs den av `jaudio_fx_send` (0 = torrt). Sekvenser som bara hör till en
 orkesterinspelning (Galaxys `*_midi_cnv` med taktmarkörer) och sekvenser utan toner döljs.
 Första genomsökningen av ett stort arkiv (Wind Waker: 93 sekvenser) tar ungefär en minut.
+
+**xSF** spelas av `xsfplay` (`tools/xsfplay`), ett eget litet program kring de emulatorkärnor
+som ligger närmast hårdvaran. Kärnorna är valda för korrekthet, inte fart:
+
+| Format | Kärna | Kommentar |
+| --- | --- | --- |
+| PSF, PSF2 | Highly Experimental | Kräver BIOS (se nedan). DMA-timing som hårdvaran (`psx_dma = "harsh"`) |
+| SSF, DSF | Highly Theoretical | 68000 via Musashi, DSP tolkad (ingen dynarec) |
+| USF | lazyusf2 | RSP på låg nivå (spelets egen mikrokod körs), sinc-resampling |
+| GSF | mGBA 0.10.3 | |
+| 2SF | DeSmuME ur in_xsf | Ingen interpolation, mixern på hårdvarans 32 728 Hz; tolk, `xsf_ds_jit = true` för JIT |
+
+Längd och fade tas från filens taggar (`length`, `fade`). Minifiler behöver sina
+`_lib`-filer i samma mapp; saknas en syns spåret men ger ett fel som säger vilken fil som
+fattas. Ljudet resamplas med soxr när ffmpeg har det.
+
+PS1/PS2 behöver Sonys BIOS, som inte kan följa med: lägg `hebios.bin` eller en PS2-BIOS
+(4 MB, t.ex. SCPH-39001) i `<meta_dir>/bios/`, eller sätt `psx_bios` under `[engines]`.
+`/health` visar vilken fil som används.
+
+Docker-bygget hämtar varje kärna på en fast commit och kör `tools/xsfplay/smoketest.py`,
+som spelar egna handskrivna testprogram (GBA, Saturn, Dreamcast, DS) och kontrollerar tonhöjden.
 
 ## Installera på TrueNAS SCALE
 
@@ -308,7 +331,12 @@ python3 tests/test_jaudio.py
 python3 tests/test_outputs.py
 python3 tests/test_updates.py
 python3 tests/test_library.py
+python3 tests/test_online.py
+python3 tests/test_xsf.py
 ```
+
+xsfplay byggs lokalt med `make -C tools/xsfplay` och sökvägar till kärnornas källkod (se
+`tools/xsfplay/Makefile`); `XSFPLAY=<binär> python3 tests/test_xsf.py` provar då den riktiga.
 
 `/api/engines` och `/api/song/<id>/engine` beskriver vad varje motor kan visa och styra:
 `insight` (sequence, pattern, voices, registers eller audio), röst-/kanalnamn och reglage.
@@ -327,6 +355,8 @@ Kod, kommentarer och genererade filer skrivs på engelska.
 
 - Ingen spolning inom ett spår: Range-förfrågningar besvaras med hela filen.
 - SID utan Songlengths.md5 spelas `default_s`.
+- xSF: PSF/PSF2 kräver en BIOS-fil från användaren. Varken PSF eller USF har testfiler i
+  bygget (de kräver BIOS respektive en N64-sparfil), så de provas bara med riktiga rippar.
 - jaudio: vibrato/tremolo och IIR/FIR-filter är inte implementerade (används inte av Galaxy).
 - Synkad uppspelning i flera rum samtidigt finns inte.
 - Subsonic-API:t svarar bara JSON, inte XML.
