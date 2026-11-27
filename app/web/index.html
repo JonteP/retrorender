@@ -969,11 +969,12 @@ function onlineCard(a) {
     <div class="cover"><div class="ph">${esc(a.platform)}<br><b>${esc(initials(a.name))}</b></div>
       <div class="rcover" style="background-image:url('/api/online/${a.online.id}/cover')"></div>
       <span class="cloud" title="In an online library (${esc(a.online.source)})">☁</span>
-      <button class="cplay" data-online="${a.online.id}" title="Download and play">▶</button></div>
+      ${a.unplayable ? "" : `<button class="cplay" data-online="${a.online.id}" title="Download and play">▶</button>`}</div>
     <div class="t">${esc(a.name)}</div>
     <div class="s">${esc([a.developer, a.publisher].filter((x, i, l) => x && l.indexOf(x) === i).join(" · "))}</div>
     <div class="s">${esc(a.platform)}${a.year ? " · " + a.year : ""}${a.size ? " · " + esc(a.size) : ""}${
-      st === "queued" || st === "downloading" ? " · downloading…" : st === "error" ? " · failed" : ""}</div></a>`;
+      st === "queued" || st === "downloading" ? " · downloading…" : st === "error" ? " · failed" : ""}</div>
+    ${a.unplayable ? `<div class="s" style="color:var(--warn)" title="No engine here plays ${esc(a.unplayable.join(", "))} yet">can't play ${esc(a.unplayable.join(", "))} yet</div>` : ""}</a>`;
 }
 
 // download an online album, then play it (or just keep it: pin)
@@ -990,6 +991,11 @@ async function playOnline(rid, { pin = false, play = true } = {}) {
       return;
     }
     if (r.online.state === "error") return toast(`Download failed: ${r.online.error || ""}`, true);
+    if (r.unplayable && ["temporary", "pinned"].includes(r.online.state) && !r.progress) {
+      toast(`“${name}” is downloaded, but no engine here plays ${r.unplayable.join(", ")} yet`, true);
+      if (location.hash === `#/online/${rid}`) route();
+      return;
+    }
     if (["temporary", "pinned"].includes(r.online.state) && !r.progress && ++waited > 15)
       return toast(`“${name}” is downloaded, but no new album appeared: it may be the same as one you already have`, true);
     const p = r.progress;
@@ -1048,9 +1054,12 @@ async function viewOnline(v, rid) {
         ${r.alt_title ? `<p class="muted">${esc(r.alt_title)}</p>` : ""}
         <p>${esc([r.developer, r.publisher].filter((x, i, l) => x && l.indexOf(x) === i).join(" · "))}</p>
         <div class="chips"><span class="chip">${esc(r.size || "?")}</span>${r.tags ? r.tags.split(",").map((t) => `<span class="chip">${esc(t)}</span>`).join("") : ""}</div>
+        ${r.unplayable ? `<div class="warnbox" style="margin-top:14px">No engine in retrorender plays
+          <span class="mono">${esc(r.unplayable.join(", "))}</span> yet${st === "temporary" || st === "pinned" ? ", so the download gives no album." : "."}</div>` : ""}
         <div class="row" style="margin-top:16px">
-          <button class="primary" id="oPlay">▶ Download and play</button>
-          <button id="oAdd" title="Download and keep it in the library">Add to library</button>
+          ${r.unplayable ? "" : `<button class="primary" id="oPlay">▶ Download and play</button>
+          <button id="oAdd" title="Download and keep it in the library">Add to library</button>`}
+          ${st === "temporary" || st === "pinned" ? `<button id="oRemove">Remove the download</button>` : ""}
         </div>
         <p class="muted" id="oState">${st === "error" ? "Last try failed: " + esc(r.online.error || "") :
           st === "queued" || st === "downloading" ? "Downloading…" :
@@ -1058,8 +1067,11 @@ async function viewOnline(v, rid) {
         <p class="mono muted">${esc(r.name)}</p>
       </div>
     </div>`;
-  $("#oPlay").onclick = () => playOnline(rid);
-  $("#oAdd").onclick = () => playOnline(rid, { pin: true, play: false });
+  if ($("#oPlay")) $("#oPlay").onclick = () => playOnline(rid);
+  if ($("#oAdd")) $("#oAdd").onclick = () => playOnline(rid, { pin: true, play: false });
+  if ($("#oRemove")) $("#oRemove").onclick = async () => {
+    try { await post(`online/${rid}/remove`); toast("Removed"); route(); } catch (e) { toast(e.message, true); }
+  };
 }
 
 // --- album ----------------------------------------------------------------------------------
@@ -1492,7 +1504,8 @@ function settingsOnline(s) {
         ${Object.entries(c.known).map(([sys, name]) => {
           const x = by[k + "/" + sys];
           const info = x ? (x.error ? " · list failed" : x.refreshed ? ` · ${x.listed}` : " · not read yet") : "";
-          return `<label title="${esc(x && x.error ? x.error : sys)}"><input type="checkbox" data-osys="${k}/${sys}" ${c.systems.includes(sys) ? "checked" : ""}> ${esc(name)}<span class="muted">${info}</span></label>`;
+          const np = c.unplayable[sys];
+          return `<label title="${esc(np ? "No engine here plays " + np.join(", ") + " yet" : x && x.error ? x.error : sys)}" ${np ? 'style="opacity:.55"' : ""}><input type="checkbox" data-osys="${k}/${sys}" ${c.systems.includes(sys) ? "checked" : ""}> ${esc(name)}<span class="muted">${np ? " · no player yet" : info}</span></label>`;
         }).join("")}</div></li></div>`).join("");
     $("#osrc").querySelectorAll("[data-oen]").forEach((b) => (b.onchange = () => { src[b.dataset.oen].enabled = b.checked; saveOnline(); }));
     $("#osrc").querySelectorAll("[data-osys]").forEach((b) => (b.onchange = () => {

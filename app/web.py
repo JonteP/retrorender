@@ -340,7 +340,13 @@ class WebUI:
         o = self.joshw
         if q.get("online") and o and o.enabled and not q.get("artist") and not q.get("chip"):
             _, rows = o.search(q=q.get("q", ""), platform=q.get("platform", ""),
-                               year=q.get("year", ""), not_local=True, limit=100000)
+                               year=q.get("year", ""), not_local=True, limit=100000,
+                               playable_only=True)
+            # downloaded, but no album came of it (files no engine here plays): still shown
+            _, got = o.search(q=q.get("q", ""), platform=q.get("platform", ""),
+                              year=q.get("year", ""), limit=100000)
+            rows += [r for r in got if r["state"] in ("temporary", "pinned") and r["local_dir"]
+                     and not self.lib.scanning and not self._albums_under(r["local_dir"])]
             for r in rows:
                 year = int(r["date"][:4]) if r["date"][:4].isdigit() else None
                 items.append((self._sort_key(q, r["title"], o.platform(r["system"], r["source"]),
@@ -371,6 +377,7 @@ class WebUI:
         o = self.joshw
         year = int(r["date"][:4]) if r["date"][:4].isdigit() else None
         return {"id": f"rm-{r['id']}", "name": r["title"], "alt_title": r["alt_title"],
+                "unplayable": self._unplayable(r),
                 "platform": o.platform(r["system"], r["source"]), "year": year, "artists": [],
                 "developer": r["developer"], "publisher": r["publisher"], "size": r["size"],
                 "cover": False, "online": {"id": r["id"], "state": r["state"], "source": r["source"],
@@ -787,6 +794,22 @@ class WebUI:
         return True
 
     # --- online libraries ------------------------------------------------------------------
+    def _unplayable(self, r: dict) -> list | None:
+        """The file types of an entry no engine here plays, or None if it is playable
+        (or not downloaded and not known to be unplayable)."""
+        o = self.joshw
+        if r["state"] in ("temporary", "pinned") and r["local_dir"] and not self.lib.scanning:
+            if self._albums_under(r["local_dir"]):
+                return None
+            d = self.lib.root / r["local_dir"]
+            skip = {".txt", ".m3u", ".m3u8", ".json", ".jpg", ".jpeg", ".png", ".nfo", ".pdf", ""}
+            exts = sorted({p.suffix.lower() for p in d.rglob("*") if p.is_file()} - skip) if d.is_dir() else []
+            return exts or ["(no files)"]
+        if not o.playable(r["system"], r["source"]):
+            src = o.sources.get(r["source"])
+            return list(getattr(src, "FORMATS", {}).get(r["system"], ()))
+        return None
+
     def _online(self, h, parts: list, q: dict, post: bool) -> bool:
         """/api/online/<id>               an entry: state, download progress, local album
            /api/online/<id>/cover         a cover found by name (libretro), for the library

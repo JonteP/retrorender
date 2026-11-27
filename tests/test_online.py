@@ -104,4 +104,10 @@ o.remove(rid)
 o._exec("UPDATE remote SET state='queued' WHERE id=?", (rid,))
 o2 = Online({"joshw": {"delay_s": 0}}, cat, lib, on_change=lambda: None, settings=settings, worker=False)
 assert o2.get(rid)["state"] == "remote"
+# systems whose rips no engine here plays are marked, and left out of the library list
+o.playable_exts = {".nsf", ".vgm"}
+assert o.playable("nsf") and not o.playable("usf") and o.playable("wii")
+settings.update("online", {"sources": {"joshw": {"enabled": True, "systems": ["nsf", "usf"]}}})
+assert o.describe_sources()["joshw"]["unplayable"]["usf"] == [".usf", ".miniusf"]
+assert o.search(playable_only=True)[0] == o.search(system="nsf")[0]
 print("online libraries: ok")

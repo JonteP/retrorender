@@ -127,6 +127,13 @@ class JoshwSource:
         "kss": "MSX", "s98": "PC-98", "pc": "PC", "fmtowns": "FM Towns", "hoot": "Hoot",
     }
 
+    # the file formats of systems whose rips are in formats not every player knows
+    FORMATS = {
+        "usf": (".usf", ".miniusf"), "gsf": (".gsf", ".minigsf"), "2sf": (".2sf", ".mini2sf"),
+        "psf": (".psf", ".minipsf"), "psf2": (".psf2", ".minipsf2"), "ssf": (".ssf", ".minissf"),
+        "dsf": (".dsf", ".minidsf"), "hoot": (".xml",),
+    }
+
     def __init__(self, cfg: dict):
         jc = cfg.get("joshw", {})
         self.platforms = {**self.SYSTEMS, **jc.get("platforms", {})}
@@ -241,6 +248,13 @@ class Online:
     def platform(self, system: str, source: str = "joshw") -> str:
         src = self.sources.get(source)
         return src.platform(system) if src else system
+
+    playable_exts: set = set()          # set by the server from the engines
+
+    def playable(self, system: str, source: str = "joshw") -> bool:
+        """False for systems whose rips no engine here can play (e.g. N64's .miniusf)."""
+        fm = getattr(self.sources.get(source), "FORMATS", {}).get(system)
+        return not fm or not self.playable_exts or any(f in self.playable_exts for f in fm)
 
     def synced_dirs(self) -> list[tuple[Path, str]]:
         """(folder, console name) for every source/system folder with downloads."""
@@ -521,10 +535,12 @@ class Online:
     def search(self, system: str = "", q: str = "", state: str = "", offset: int = 0,
                limit: int = 100, source: str = "", not_local: bool = False,
                platform: str = "", year: str = "", any_system: bool = False,
-               order: str = "title") -> tuple[int, list[dict]]:
+               order: str = "title", playable_only: bool = False) -> tuple[int, list[dict]]:
         """Entries of the switched-on sources and systems (any_system: also ones switched
         off since, e.g. downloads made before)."""
         pairs = self.active()
+        if playable_only:
+            pairs = [p for p in pairs if self.playable(p[1], p[0])]
         if not pairs and not any_system:
             return 0, []
         where = ["1"] if any_system else \
@@ -563,6 +579,8 @@ class Online:
         """Entries not downloaded, per console and per year (for the library's filters)."""
         out = {"platforms": {}, "years": {}}
         for source, system in self.active():
+            if not self.playable(system, source):
+                continue
             n = self._q1("SELECT count(*) FROM remote WHERE source=? AND system=?"
                          " AND state NOT IN ('temporary', 'pinned')", (source, system))[0]
             p = self.platform(system, source)
@@ -600,7 +618,9 @@ class Online:
     def describe_sources(self) -> dict:
         conf = self.conf()
         return {name: {"label": src.label, "description": src.description,
-                       "known": src.platforms, **conf["sources"][name]}
+                       "known": src.platforms, **conf["sources"][name],
+                       "unplayable": {s: list(src.FORMATS[s]) for s in getattr(src, "FORMATS", {})
+                                      if not self.playable(s, name)}}
                 for name, src in self.sources.items()}
 
     def _q1(self, sql, args=()):
