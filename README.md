@@ -125,11 +125,20 @@ containern). Omslag:
 - Hämtning sker automatiskt efter varje biblioteksskanning, för album som saknar omslag
   från en källa högre upp. Hämtade bilder sparas som `cover.auto.*` med `cover.auto.json`
   (källa och matchat namn). Album där inget hittades försöks igen efter 30 dagar, eller
-  direkt med "Try all again".
+  direkt med "Search all again", som också söker om album som redan fått ett hämtat omslag
+(men inte omslag du valt eller gjort själv).
+
+Utgåva per album: "Release" i omslagsredigeraren (t.ex. Japan) går före den vanliga
+ordningen för just det albumet; ett album vars namn eller mapp säger "(Japan)" gör det av
+sig självt. Heter spelet något annat i den utgåvan (Castlevania III = Akumajou Densetsu),
+sök på det namnet i redigeraren och välj bilden. Val sparas i `[covers.album_regions]`.
+"Leave them unchanged" visar bilderna hela, med tom yta runt, i webbgränssnittet; TV och
+Subsonic-appar får originalbilden och bestämmer själva (de flesta beskär).
 
 libretro-thumbnails matchas på albumets namn mot No-Intro-namnen ("The Legend of Zelda:
 The Wind Waker" = "Legend of Zelda, The - The Wind Waker (USA)", "Castlevania III" =
-"Castlevania III - Dracula's Curse"). Konsolerna översätts till libretros system; för en
+"Castlevania III - Dracula's Curse"), men olika nummer matchas aldrig ("Super Mario
+Bros. 3" blir aldrig "… 2"). Konsolerna översätts till libretros system; för en
 egen konsol, lägg till den i `_settings.toml`:
 
 ```toml

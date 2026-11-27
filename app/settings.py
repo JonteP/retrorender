@@ -32,6 +32,7 @@ DEFAULTS = {
         "shape": "crop",                 # non-square images: crop | pad | original
         "regions": ["USA", "World", "Europe", "Japan"],   # preferred release, in order
         "libretro_systems": {},          # extra console -> libretro system name
+        "album_regions": {},             # album key -> release to prefer for that album
     },
 }
 
@@ -145,3 +146,5 @@ class Settings:
             raise ValueError("regions must be a list of names")
         if not isinstance(c.get("libretro_systems", {}), dict):
             raise ValueError("libretro_systems must be a table")
+        if not isinstance(c.get("album_regions", {}), dict):
+            raise ValueError("album_regions must be a table")

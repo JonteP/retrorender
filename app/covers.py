@@ -33,6 +33,7 @@ USER_AGENT = "retrorender (+https://github.com/JonteP/retrorender)"
 MISS_DAYS = 30
 LIST_DAYS = 7
 MAX_IMAGE = 8 * 1024 * 1024
+MAX_JSON = 32 * 1024 * 1024
 
 # our console names (config [platforms], joshw) -> libretro-thumbnails systems, best first
 LIBRETRO_SYSTEMS = {
@@ -86,11 +87,44 @@ def norm(name: str) -> str:
     return " ".join(s.split())
 
 
+# region codes (ours, TOSEC's) -> No-Intro's names
+REGION_NAMES = {"JP": "Japan", "J": "Japan", "US": "USA", "U": "USA", "EU": "Europe",
+                "E": "Europe", "W": "World", "KR": "Korea", "World": "World"}
+
+
 def regions_of(name: str) -> list[str]:
     out = []
     for grp in re.findall(r"\(([^)]*)\)", name):
-        out += [x.strip() for x in grp.split(",")]
+        out += [REGION_NAMES.get(x.strip(), x.strip()) for x in grp.split(",")]
     return out
+
+
+def extras(name: str) -> int:
+    """A small penalty for a release that is more than region and languages: "(Rev 1)",
+    "(Virtual Console)", "(Castlevania Anniversary Collection)" come after the plain one."""
+    n = 0
+    for grp in re.findall(r"\(([^)]*)\)", name):
+        items = [x.strip() for x in grp.split(",")]
+        if all(REGION_NAMES.get(x, x) in REGION_WORDS for x in items):
+            continue
+        if all(re.fullmatch(r"[A-Z][a-z]", x) for x in items):          # languages
+            continue
+        n += 1 if grp.startswith("Rev") else 5
+    return n
+
+
+REGION_WORDS = {"USA", "Europe", "Japan", "World", "Korea", "Asia", "Australia", "Brazil",
+                "Canada", "China", "France", "Germany", "Hong Kong", "Italy", "Netherlands",
+                "Spain", "Sweden", "Taiwan", "United Kingdom", "Russia"}
+
+
+_ROMAN = {"ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii", "xiii"}
+
+
+def numbers(n: str) -> set:
+    """Sequel numbers in a normalized title: "super mario bros 3" -> {"3"}. Titles that
+    differ in these are different games, however alike they are otherwise."""
+    return {t for t in n.split() if t.isdigit() or t in _ROMAN}
 
 
 # --- libretro-thumbnails --------------------------------------------------------------------
@@ -121,35 +155,50 @@ class Libretro:
         return [s for v in LIBRETRO_SYSTEMS.values() for s in v if norm(s) == norm(platform)][:1]
 
     def listing(self, system: str) -> dict:
-        """{"files": {folder: [file names]}} for one console."""
+        """{"files": {folder: [file names]}, "error": …} for one console. Read one folder at
+        a time: a whole big console (NES has 50 000 files) is more than GitHub lists at once."""
         with self._lock:
-            if system in self._lists:
-                return self._lists[system]
+            hit = self._lists.get(system)
+            if hit and (hit["files"] or time.time() - hit.get("at", 0) < 600):
+                return hit                      # a failed listing is tried again after 10 min
             p = self.cache / f"{self.repo(system)}.json" if self.cache else None
             if p and p.is_file() and time.time() - p.stat().st_mtime < LIST_DAYS * 86400:
                 try:
-                    self._lists[system] = json.loads(p.read_text("utf-8"))
-                    return self._lists[system]
+                    cached = json.loads(p.read_text("utf-8"))
+                    if cached.get("v") == 2:
+                        self._lists[system] = cached
+                        return cached
                 except ValueError:
                     pass
             files: dict[str, list] = {}
+            errors = []
+            api = f"https://api.github.com/repos/{self.ORG}/{self.repo(system)}/git/trees"
             try:
-                data = json.loads(self.get(
-                    f"https://api.github.com/repos/{self.ORG}/{self.repo(system)}/git/trees/HEAD?recursive=1"))
-                for e in data.get("tree", []):
-                    folder, _, f = e.get("path", "").partition("/")
-                    if f and folder in LIBRETRO_TYPES.values():
-                        files.setdefault(folder, []).append(f)
-            except Exception as e:      # noqa: BLE001 - fall back to the plain folder listing
-                log.info("GitHub listing of %s failed (%s); trying thumbnails.libretro.com", system, e)
-                for folder in LIBRETRO_TYPES.values():
-                    try:
-                        html = self.get(f"https://thumbnails.libretro.com/{urllib.parse.quote(system)}/{folder}/")
-                        files[folder] = [urllib.parse.unquote(h) for h in
-                                         re.findall(r'href="([^"?/][^"]*\.png)"', html.decode("utf-8", "replace"))]
-                    except Exception as e2:  # noqa: BLE001
-                        log.info("listing %s/%s failed: %s", system, folder, e2)
-            listing = {"system": system, "files": files}
+                top = json.loads(self.get(f"{api}/HEAD", max_bytes=MAX_JSON))
+                folders = {e["path"]: e["sha"] for e in top.get("tree", []) if e.get("type") == "tree"}
+            except Exception as e:      # noqa: BLE001
+                folders = {}
+                errors.append(f"GitHub: {e}")
+            for folder in LIBRETRO_TYPES.values():
+                try:
+                    if folder in folders:
+                        sub = json.loads(self.get(f"{api}/{folders[folder]}", max_bytes=MAX_JSON))
+                        if not sub.get("truncated"):
+                            files[folder] = [e["path"] for e in sub.get("tree", [])
+                                             if e.get("type") == "blob"]
+                            continue
+                    if folders and folder not in folders:
+                        continue                # the console has no such images
+                    html = self.get(f"https://thumbnails.libretro.com/{urllib.parse.quote(system)}/{folder}/",
+                                    max_bytes=MAX_JSON)
+                    files[folder] = [urllib.parse.unquote(h) for h in
+                                     re.findall(r'href="([^"?/][^"]*\.png)"', html.decode("utf-8", "replace"))]
+                except Exception as e:  # noqa: BLE001
+                    errors.append(f"{folder}: {e}")
+            if errors:
+                log.info("listing %s: %s", system, "; ".join(errors))
+            listing = {"v": 2, "system": system, "files": files, "at": time.time(),
+                       "error": errors[0][:200] if errors and not files else ""}
             if files and p:
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(json.dumps(listing), "utf-8")
@@ -158,9 +207,13 @@ class Libretro:
 
     def search(self, platform: str, names: list[str], kind: str, settings: dict,
                limit: int = 1) -> list[dict]:
-        """Best matches for the album's names: [{system, path, name, score}]."""
+        """Best matches for the album's names: [{system, path, name, score}]. settings may
+        have "prefer": a region that goes before the usual order (for one album)."""
         folder = LIBRETRO_TYPES[kind]
-        regions = settings.get("regions", [])
+        regions = list(settings.get("regions", []))
+        if settings.get("prefer"):
+            pref = REGION_NAMES.get(settings["prefer"], settings["prefer"])
+            regions = [pref] + [r for r in regions if r != pref]
         wanted = [norm(n) for n in names if n and norm(n)]
         if not wanted:
             return []
@@ -180,15 +233,23 @@ class Libretro:
                 exact = by_norm.get(w)
                 close = [(1.0, w)] if exact else [
                     (difflib.SequenceMatcher(None, w, k).ratio(), k)
-                    for k in difflib.get_close_matches(w, by_norm, n=max(limit, 3), cutoff=0.86)]
+                    for k in difflib.get_close_matches(w, by_norm, n=max(limit, 3), cutoff=0.86)
+                    if numbers(k) == numbers(w)]
                 if not close and len(by_main.get(w, ())) == 1:    # one game with that main title
-                    close = [(0.9, next(iter(by_main[w])))]
+                    k = next(iter(by_main[w]))
+                    if numbers(k) == numbers(w):
+                        close = [(0.9, k)]
                 for score, k in close:
                     for f in by_norm[k]:
                         rs = regions_of(f)
                         rank = min((regions.index(r) for r in rs if r in regions), default=len(regions))
                         if BAD_RELEASE.search(f):           # prototypes, demos, unlicensed …
                             rank += 100
+                        if re.search(r"\[[^\]]*\]", f):     # TOSEC flags: hacks, bad dumps …
+                            rank += 200
+                        if re.search(r"\(\d{4}|\(19xx|\(200x", f):   # TOSEC names after No-Intro's
+                            rank += 20
+                        rank += extras(f)
                         hits.append({"system": system, "path": f"{folder}/{f}", "name": f.rsplit(".", 1)[0],
                                      "score": round(score, 3), "_rank": (-score, rank, len(f))})
             if hits and limit == 1:
@@ -233,12 +294,12 @@ class Libretro:
         raise err
 
 
-def http_get(url: str, timeout=30) -> bytes:
+def http_get(url: str, timeout=30, max_bytes=MAX_IMAGE) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT,
                                                "Accept": "application/vnd.github+json, */*"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        data = r.read(MAX_IMAGE + 1)
-    if len(data) > MAX_IMAGE:
+        data = r.read(max_bytes + 1)
+    if len(data) > max_bytes:
         raise ValueError("response too large")
     return data
 
@@ -324,6 +385,7 @@ class CoverFetcher:
                        "missing": 0, "errors": 0, "last_run": None, "last_error": ""}
         self._lock = threading.Lock()
         self._again = False
+        self._refresh = False
 
     # --- what an album has ---------------------------------------------------------------
     def auto_info(self, key: str) -> dict | None:
@@ -341,7 +403,7 @@ class CoverFetcher:
         except (OSError, ValueError, AttributeError):
             return {}
 
-    def needs(self, al, c: dict, misses: dict) -> bool:
+    def needs(self, al, c: dict, misses: dict, refresh: bool = False) -> bool:
         if "libretro" not in c["enabled"] or self.lib.uploaded_cover(al.key):
             return False
         order = c["order"]
@@ -349,22 +411,36 @@ class CoverFetcher:
             return False                 # the rip's image comes first and exists
         info = self.auto_info(al.key)
         if info is not None:
-            return info.get("type") != c["libretro_type"] and not info.get("pinned")
+            return not info.get("pinned") and (refresh or info.get("type") != c["libretro_type"]
+                                               or info.get("prefer", "") != self.prefer(al, c))
         m = misses.get(al.key, {})
-        return not (m.get("type") == c["libretro_type"]
+        return not (m.get("type") == c["libretro_type"] and m.get("prefer", "") == self.prefer(al, c)
                     and time.time() - m.get("at", 0) < MISS_DAYS * 86400)
+
+    @staticmethod
+    def prefer(al, c: dict) -> str:
+        """The release to prefer for this album: set in the cover editor, else the album's
+        own region if it has exactly one (e.g. "(Japan)" in the rip's name)."""
+        r = c.get("album_regions", {}).get(al.key)
+        if r:
+            return REGION_NAMES.get(r, r)
+        return REGION_NAMES.get(al.region, "") if al.region and "+" not in al.region else ""
+
+    def settings_for(self, al, c: dict) -> dict:
+        return dict(c, prefer=self.prefer(al, c))
 
     @staticmethod
     def names(al) -> list[str]:
         return [al.name]
 
     # --- running ---------------------------------------------------------------------------------
-    def start(self, manual: bool = False):
+    def start(self, manual: bool = False, refresh: bool = False):
         """Fetch for all albums that need it, in the background (one run at a time).
         Runs after each scan when "auto" is on; manual=True runs anyway."""
         if not self.lib.meta.writable or not (manual or self.settings.covers().get("auto")):
             return
         with self._lock:
+            self._refresh = self._refresh or refresh
             if self.status["running"]:
                 self._again = True
                 return
@@ -374,7 +450,9 @@ class CoverFetcher:
     def _run(self):
         try:
             while True:
-                self.run_once()
+                with self._lock:
+                    refresh, self._refresh = self._refresh, False
+                self.run_once(refresh)
                 with self._lock:
                     if not self._again:
                         break
@@ -383,10 +461,11 @@ class CoverFetcher:
             with self._lock:
                 self.status["running"] = False
 
-    def run_once(self):
+    def run_once(self, refresh: bool = False):
+        """refresh=True: also albums with a fetched cover (not ones you picked yourself)."""
         c = self.settings.covers()
-        misses = self._misses()
-        todo = [a for a in list(self.lib.index.albums.values()) if self.needs(a, c, misses)]
+        misses = {} if refresh else self._misses()
+        todo = [a for a in list(self.lib.index.albums.values()) if self.needs(a, c, misses, refresh)]
         st = self.status
         st.update(checked=0, total=len(todo), found=0, missing=0, errors=0, last_error="")
         for al in todo:
@@ -398,7 +477,8 @@ class CoverFetcher:
                     self.lib.apply_covers(al)
                 else:
                     st["missing"] += 1
-                    misses[al.key] = {"type": c["libretro_type"], "at": time.time(), "name": al.name}
+                    misses[al.key] = {"type": c["libretro_type"], "prefer": self.prefer(al, c),
+                                      "at": time.time(), "name": al.name}
             except Exception as e:      # noqa: BLE001 - one album must not stop the run
                 st["errors"] += 1
                 st["last_error"] = f"{al.name}: {e}"
@@ -408,18 +488,21 @@ class CoverFetcher:
             self.misses_path.parent.mkdir(parents=True, exist_ok=True)
             self.misses_path.write_text(json.dumps(misses, ensure_ascii=False, indent=1), "utf-8")
         st["last_run"] = time.strftime("%Y-%m-%d %H:%M")
+        st["listing_errors"] = {k: v["error"] for k, v in self.libretro._lists.items() if v.get("error")}
         if todo:
             log.info("covers: %d found, %d not found, %d errors", st["found"], st["missing"], st["errors"])
 
     def fetch(self, al, c: dict) -> bool:
-        hits = self.libretro.search(al.platform, self.names(al), c["libretro_type"], c)
+        sc = self.settings_for(al, c)
+        hits = self.libretro.search(al.platform, self.names(al), c["libretro_type"], sc)
         if not hits:
             return False
         h = hits[0]
-        self.save(al, h, c["libretro_type"], self.remote_image(h["system"], h["path"]))
+        self.save(al, h, c["libretro_type"], self.remote_image(h["system"], h["path"]),
+                  prefer=sc["prefer"])
         return True
 
-    def save(self, al, hit: dict, kind: str, data: bytes, pinned: bool = False):
+    def save(self, al, hit: dict, kind: str, data: bytes, pinned: bool = False, prefer: str = ""):
         ext = image_ext(data)
         if not ext:
             raise ValueError("not a PNG or JPEG image")
@@ -430,7 +513,8 @@ class CoverFetcher:
         p.write_bytes(data)
         p.with_suffix(".json").write_text(json.dumps(
             {"source": "libretro", "type": kind, "system": hit["system"], "path": hit["path"],
-             "name": hit["name"], "pinned": pinned, "fetched": time.strftime("%Y-%m-%d")},
+             "name": hit["name"], "pinned": pinned, "prefer": prefer,
+             "fetched": time.strftime("%Y-%m-%d")},
             ensure_ascii=False, indent=1) + "\n", "utf-8")
 
     def remote_image(self, system: str, path: str) -> bytes:
@@ -446,6 +530,20 @@ class CoverFetcher:
             c.parent.mkdir(parents=True, exist_ok=True)
             c.write_bytes(data)
         return data
+
+    def refetch(self, al) -> bool:
+        """Fetch this album's cover again now (e.g. after choosing another release)."""
+        c = self.settings.covers()
+        info = self.auto_info(al.key)
+        found = self.fetch(al, c)
+        if found:
+            al.covers["auto"] = self.lib.auto_cover(al.key)
+        elif info is not None and not info.get("pinned"):
+            for e in ("jpg", "png", "json"):
+                self.lib.cover_target(al.key, e, "auto").unlink(missing_ok=True)
+            al.covers.pop("auto", None)
+        self.lib.apply_covers(al)
+        return found
 
     def forget_misses(self):
         if self.misses_path:

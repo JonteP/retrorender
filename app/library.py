@@ -13,6 +13,7 @@ survive re-indexing.
 from __future__ import annotations
 
 import hashlib
+import os
 import json
 import logging
 import re
@@ -555,6 +556,18 @@ class Library:
         rest = [p for o, p in pick if o != "upload"]
         al.rip_cover = rest[0] if rest else None
         al.rip_own = al.covers.get("rip")
+
+    def cover_rev(self, al: Album) -> str:
+        """Changes whenever the served cover changes (image or square shape), for URLs:
+        browsers keep images of a page in memory even when told to check them."""
+        if not al.cover:
+            return ""
+        try:
+            st = os.stat(al.cover)
+        except OSError:
+            return ""
+        shape = self.settings.covers()["shape"] if self.settings and al.cover_origin != "upload" else "o"
+        return f"{int(st.st_mtime) % 100000000}{st.st_size % 1000}{shape[0]}"
 
     def cover_image(self, al: Album, original: bool = False):
         """(bytes, content type, etag) of the cover as it is served, or None. A cover you

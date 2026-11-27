@@ -19,10 +19,12 @@ Routes (all require HTTP Basic auth with the [web] or [subsonic] credentials):
   GET  /api/settings             settings changed in the web UI (/meta/_settings.toml)
   POST /api/settings             {covers: {order, enabled, auto, libretro_type, shape, regions}}
   GET  /api/covers/status        the background cover fetch
-  POST /api/covers/fetch         fetch missing covers now {retry: true = also earlier misses}
+  POST /api/covers/fetch         fetch missing covers now {retry: true = all again, also earlier
+                                 misses and fetched covers (not ones you picked)}
   GET  /api/covers/remote?system=&path=   an image from libretro-thumbnails (for the editor)
   GET  /api/album/<id>/cover/candidates?q=&type=   covers from the sources for this album
   POST /api/album/<id>/cover/pick  {system, path, type, use: "cover" | "crop"}
+  POST /api/album/<id>/cover/region {region: "Japan" | "" (automatic)}: release to prefer
   GET  /api/engines               what each engine can show and control (see Engine.describe)
   GET  /api/song/<id>/engine      the same for one track (voice names etc.)
   GET  /api/playlists             playlists (without songs)
@@ -159,6 +161,8 @@ class WebUI:
                 return h._json(self.regenerate(part)) or True
             if action == "cover" and len(parts) > 3 and parts[3] == "candidates":
                 return h._json(*self.cover_candidates(al, q)) or True
+            if action == "cover" and post and len(parts) > 3 and parts[3] == "region":
+                return h._json(*self.cover_region(al, h)) or True
             if action == "cover" and post and len(parts) > 3 and parts[3] == "pick":
                 return h._json(*self.cover_pick(al, h)) or True
             if action == "cover" and post:
@@ -231,7 +235,8 @@ class WebUI:
                 "artists": [{"id": i, "name": n} for i, n in al.artists],
                 "songs": len(al.songs),
                 "duration": int(sum(ix.songs[s].duration for s in al.songs if s in ix.songs)),
-                "cover": bool(al.cover), "region": al.region, "chips": al.chips,
+                "cover": bool(al.cover), "cover_rev": self.lib.cover_rev(al),
+                "region": al.region, "chips": al.chips,
                 "added": al.created}
 
     def song_brief(self, s) -> dict:
@@ -241,6 +246,7 @@ class WebUI:
                 "artists": [{"id": i, "name": n} for i, n in s.artists],
                 "album": al.name if al else "", "album_id": s.album_id,
                 "platform": s.platform, "cover": bool(al and al.cover),
+                "cover_rev": self.lib.cover_rev(al) if al else "",
                 "duration": round(s.duration, 1), "engine": s.engine,
                 "file": s.rel, "sub": s.sub, "disc": s.disc,
                 "render": f"/render?path={quote(s.rel)}&sub={s.sub}"}
@@ -426,7 +432,7 @@ class WebUI:
                 b = {}
             if b.get("retry"):
                 f.forget_misses()
-            f.start(manual=True)
+            f.start(manual=True, refresh=bool(b.get("retry")))
             return h._json({"ok": True, "status": f.status}) or True
         if what == "remote":
             system, path = q.get("system", ""), q.get("path", "")
@@ -453,18 +459,41 @@ class WebUI:
         kind = q.get("type") or c["libretro_type"]
         if kind not in ("boxart", "title", "snap", "logo"):
             return {"error": "unknown type"}, 400
+        sc = f.settings_for(al, c)
         try:
             if q.get("q"):
-                hits = f.libretro.browse(al.platform, q["q"], kind, c)
+                hits = f.libretro.browse(al.platform, q["q"], kind, sc)
             else:
-                hits = f.libretro.search(al.platform, f.names(al), kind, c, limit=12)
+                hits = f.libretro.search(al.platform, f.names(al), kind, sc, limit=12)
         except Exception as e:      # noqa: BLE001 - shown in the editor
             return {"error": str(e), "candidates": []}, 200
         systems = f.libretro.systems_for(al.platform, c.get("libretro_systems", {}))
         for x in hits:
             x["url"] = f"/api/covers/remote?system={quote(x['system'])}&path={quote(x['path'])}"
             x["type"] = kind
-        return {"candidates": hits, "systems": systems, "type": kind}, 200
+        errors = [f.libretro.listing(x).get("error") for x in systems]
+        return {"candidates": hits, "systems": systems, "type": kind, "prefer": sc["prefer"],
+                "error": "; ".join(e for e in errors if e)}, 200
+
+    def cover_region(self, al, h):
+        """Choose which release's cover this album gets ("" = automatic), and fetch it."""
+        if self.fetcher is None or not self.settings.writable:
+            return {"error": "the meta folder is not writable"}, 403
+        try:
+            region = str(json.loads(self._body(h) or "{}").get("region", "")).strip()
+        except ValueError:
+            return {"error": "bad request"}, 400
+        regions = dict(self.settings.covers().get("album_regions", {}))
+        if region:
+            regions[al.key] = region
+        else:
+            regions.pop(al.key, None)
+        self.settings.update("covers", {"album_regions": regions})
+        try:
+            found = self.fetcher.refetch(al)
+        except Exception as e:      # noqa: BLE001
+            return {"error": str(e)}, 502
+        return {"ok": True, "found": found, "info": self.fetcher.auto_info(al.key)}, 200
 
     def cover_pick(self, al, h):
         """Use an image from a source: as the album's cover (kept even if the automatic
