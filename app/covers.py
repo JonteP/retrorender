@@ -385,6 +385,7 @@ class CoverFetcher:
                        "missing": 0, "errors": 0, "last_run": None, "last_error": ""}
         self._lock = threading.Lock()
         self._again = False
+        self._refresh = False
 
     # --- what an album has ---------------------------------------------------------------
     def auto_info(self, key: str) -> dict | None:
@@ -402,7 +403,7 @@ class CoverFetcher:
         except (OSError, ValueError, AttributeError):
             return {}
 
-    def needs(self, al, c: dict, misses: dict) -> bool:
+    def needs(self, al, c: dict, misses: dict, refresh: bool = False) -> bool:
         if "libretro" not in c["enabled"] or self.lib.uploaded_cover(al.key):
             return False
         order = c["order"]
@@ -410,7 +411,7 @@ class CoverFetcher:
             return False                 # the rip's image comes first and exists
         info = self.auto_info(al.key)
         if info is not None:
-            return not info.get("pinned") and (info.get("type") != c["libretro_type"]
+            return not info.get("pinned") and (refresh or info.get("type") != c["libretro_type"]
                                                or info.get("prefer", "") != self.prefer(al, c))
         m = misses.get(al.key, {})
         return not (m.get("type") == c["libretro_type"] and m.get("prefer", "") == self.prefer(al, c)
@@ -433,12 +434,13 @@ class CoverFetcher:
         return [al.name]
 
     # --- running ---------------------------------------------------------------------------------
-    def start(self, manual: bool = False):
+    def start(self, manual: bool = False, refresh: bool = False):
         """Fetch for all albums that need it, in the background (one run at a time).
         Runs after each scan when "auto" is on; manual=True runs anyway."""
         if not self.lib.meta.writable or not (manual or self.settings.covers().get("auto")):
             return
         with self._lock:
+            self._refresh = self._refresh or refresh
             if self.status["running"]:
                 self._again = True
                 return
@@ -448,7 +450,9 @@ class CoverFetcher:
     def _run(self):
         try:
             while True:
-                self.run_once()
+                with self._lock:
+                    refresh, self._refresh = self._refresh, False
+                self.run_once(refresh)
                 with self._lock:
                     if not self._again:
                         break
@@ -457,10 +461,11 @@ class CoverFetcher:
             with self._lock:
                 self.status["running"] = False
 
-    def run_once(self):
+    def run_once(self, refresh: bool = False):
+        """refresh=True: also albums with a fetched cover (not ones you picked yourself)."""
         c = self.settings.covers()
-        misses = self._misses()
-        todo = [a for a in list(self.lib.index.albums.values()) if self.needs(a, c, misses)]
+        misses = {} if refresh else self._misses()
+        todo = [a for a in list(self.lib.index.albums.values()) if self.needs(a, c, misses, refresh)]
         st = self.status
         st.update(checked=0, total=len(todo), found=0, missing=0, errors=0, last_error="")
         for al in todo:

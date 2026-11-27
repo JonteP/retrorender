@@ -19,7 +19,8 @@ Routes (all require HTTP Basic auth with the [web] or [subsonic] credentials):
   GET  /api/settings             settings changed in the web UI (/meta/_settings.toml)
   POST /api/settings             {covers: {order, enabled, auto, libretro_type, shape, regions}}
   GET  /api/covers/status        the background cover fetch
-  POST /api/covers/fetch         fetch missing covers now {retry: true = also earlier misses}
+  POST /api/covers/fetch         fetch missing covers now {retry: true = all again, also earlier
+                                 misses and fetched covers (not ones you picked)}
   GET  /api/covers/remote?system=&path=   an image from libretro-thumbnails (for the editor)
   GET  /api/album/<id>/cover/candidates?q=&type=   covers from the sources for this album
   POST /api/album/<id>/cover/pick  {system, path, type, use: "cover" | "crop"}
@@ -431,7 +432,7 @@ class WebUI:
                 b = {}
             if b.get("retry"):
                 f.forget_misses()
-            f.start(manual=True)
+            f.start(manual=True, refresh=bool(b.get("retry")))
             return h._json({"ok": True, "status": f.status}) or True
         if what == "remote":
             system, path = q.get("system", ""), q.get("path", "")

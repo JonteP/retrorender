@@ -125,7 +125,8 @@ containern). Omslag:
 - Hämtning sker automatiskt efter varje biblioteksskanning, för album som saknar omslag
   från en källa högre upp. Hämtade bilder sparas som `cover.auto.*` med `cover.auto.json`
   (källa och matchat namn). Album där inget hittades försöks igen efter 30 dagar, eller
-  direkt med "Try all again".
+  direkt med "Search all again", som också söker om album som redan fått ett hämtat omslag
+(men inte omslag du valt eller gjort själv).
 
 Utgåva per album: "Release" i omslagsredigeraren (t.ex. Japan) går före den vanliga
 ordningen för just det albumet; ett album vars namn eller mapp säger "(Japan)" gör det av
