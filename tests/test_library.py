@@ -192,6 +192,24 @@ h = Req("POST", json.dumps({"title": "Dragon Roost"}).encode())
 web.handle(h, f"/api/song/{ww.songs[3]}/title", {})
 assert '"jaiseqs#1" = "Dragon Roost"' in meta.titles_path(ww.parts[1].key).read_text()
 
+# --- covers: the image you chose is kept to crop from; removing the cover keeps it -------
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 40
+JPG = b"\xff\xd8\xff" + b"\0" * 40
+for body, q in ((PNG, {"source": "1"}), (JPG, {})):
+    h = Req("POST", body, "image/png")
+    web.handle(h, f"/api/album/{ww.id}/cover", q)
+    assert h.out == {"ok": True}, h.out
+wdir = metadir / "GameCube/Wind Waker"
+assert sorted(p.name for p in wdir.glob("cover*")) == ["cover.jpg", "cover.source.png"]
+assert get(f"/api/album/{ww.id}")["cover_source"] and ww.cover.endswith("cover.jpg")
+h = Req("POST"); web.handle(h, f"/api/album/{ww.id}/cover/delete", {})
+assert sorted(p.name for p in wdir.glob("cover*")) == ["cover.source.png"]
+h = Req("POST"); web.handle(h, f"/api/album/{ww.id}/cover/delete", {"all": "1"})
+assert not list(wdir.glob("cover*"))
+lib.scan()
+ix = lib.index
+ww = next(a for a in ix.albums.values() if a.name == "Wind Waker")
+
 # --- renaming one track: titles.toml + album.toml, which stays untouched -------------------
 from meta import gen_status  # noqa: E402
 h = Req("POST", json.dumps({"title": "Boss Theme"}).encode())

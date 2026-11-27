@@ -10,7 +10,9 @@ Routes (all require HTTP Basic auth with the [web] or [subsonic] credentials):
   GET  /api/tracks?…              every track matching the same filters, or album=/playlist=
                                   (for "play all"), in album and track order
   GET  /api/album/<id>            album details, tracks, album.toml text
-  GET  /api/cover/<album id>      cover image (?original=1: the rip's own, not an uploaded one)
+  GET  /api/cover/<album id>      cover image; ?original=1: the image to crop from (the one you
+                                  uploaded, else the rip's own)
+  POST /api/album/<id>/cover      ?source=1 keeps an image as the one to crop from
   POST /api/album/<id>/cover      upload a cover (body = JPEG or PNG), stored in /meta
   POST /api/album/<id>/cover/delete  remove an uploaded cover
   POST /api/song/<id>/title       rename one track {title}: titles.toml + album.toml
@@ -144,8 +146,8 @@ class WebUI:
                 return h._json(self.regenerate(part)) or True
             if action == "cover" and post:
                 if len(parts) > 3 and parts[3] == "delete":
-                    return h._json(*self.delete_cover(al)) or True
-                return h._json(*self.save_cover(al, h)) or True
+                    return h._json(*self.delete_cover(al, everything=bool(q.get("all")))) or True
+                return h._json(*self.save_cover(al, h, source=bool(q.get("source")))) or True
         if name == "cover" and len(parts) >= 2:
             return self._cover(h, parts[1], original=bool(q.get("original")))
         if name == "catalog":
@@ -440,6 +442,7 @@ class WebUI:
                  if len(parts) > 1 else [],
                  cover_uploaded=bool(self.lib.uploaded_cover(al.key)),
                  rip_cover=bool(al.rip_cover),
+                 cover_source=bool(self.lib.uploaded_cover(al.key, source=True)),
                  writable=self.meta.writable)
         d.update({k: parts[0][k] for k in ("toml", "toml_state", "toml_path", "titles",
                                            "titles_builtin", "titles_template")})
@@ -448,7 +451,8 @@ class WebUI:
     def _cover(self, h, album_id: str, original: bool = False) -> bool:
         """The album's cover; original=True leaves out an uploaded one (for the crop tool)."""
         al = self.lib.index.albums.get(album_id)
-        path = al and (al.rip_cover if original else al.cover)
+        path = al and ((self.lib.uploaded_cover(al.key, source=True) or al.rip_cover)
+                       if original else al.cover)
         if not path or not Path(path).is_file():
             h.send_response(404)
             h.send_header("Content-Length", "0")
@@ -474,8 +478,9 @@ class WebUI:
 
     MAX_COVER = 8 * 1024 * 1024
 
-    def save_cover(self, al, h):
-        """The uploaded image goes to /meta next to album.toml and wins over the rip's own."""
+    def save_cover(self, al, h, source: bool = False):
+        """The uploaded image goes to /meta next to album.toml and wins over the rip's own.
+        source=True stores the image you chose, to crop from (it is not shown itself)."""
         if not self.meta.writable:
             return {"error": "the meta folder is not writable"}, 403
         n = int(h.headers.get("Content-Length") or 0)
@@ -486,19 +491,27 @@ class WebUI:
                else "jpg" if data[:3] == b"\xff\xd8\xff" else None)
         if ext is None:
             return {"error": "only JPEG and PNG images are supported"}, 415
-        self.delete_cover(al)
-        p = self.lib.cover_target(al.key, ext)
+        for e in ("jpg", "png"):                    # the other format of the same kind
+            self.lib.cover_target(al.key, e, source).unlink(missing_ok=True)
+        p = self.lib.cover_target(al.key, ext, source)
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".tmp")
         tmp.write_bytes(data)
         tmp.replace(p)
+        if source:
+            return {"ok": True}, 200
         al.cover = str(p)
         log.info("cover for %s saved to %s", al.name, p)
         return {"ok": True}, 200
 
-    def delete_cover(self, al):
+    def delete_cover(self, al, everything: bool = False):
+        """Removes the cover made from your image; everything=True also the image itself."""
         if not self.meta.writable:
             return {"error": "the meta folder is not writable"}, 403
+        if everything:
+            src = self.lib.uploaded_cover(al.key, source=True)
+            if src:
+                Path(src).unlink(missing_ok=True)
         old = self.lib.uploaded_cover(al.key)
         if old:
             Path(old).unlink(missing_ok=True)
