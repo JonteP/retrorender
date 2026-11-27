@@ -494,18 +494,20 @@ class Library:
             own = split_names(so.composer)
             so.artists = [idx.artist(n) for n in own] if own else list(al.artists)
 
-    def cover_target(self, key: str, ext: str) -> Path:
-        """Where an uploaded cover for this album is stored in /meta."""
+    def cover_target(self, key: str, ext: str, source: bool = False) -> Path:
+        """Where an uploaded cover for this album is stored in /meta. source=True: the image
+        you chose, kept as it was so the cover can be cropped again from it."""
         p = self.meta.path_for(key)
+        name = "cover.source" if source else "cover"
         if key.startswith("dir:"):
-            return p.parent / f"cover.{ext}"
-        return p.with_name(p.name.removesuffix(".album.toml") + f".cover.{ext}")
+            return p.parent / f"{name}.{ext}"
+        return p.with_name(p.name.removesuffix(".album.toml") + f".{name}.{ext}")
 
-    def uploaded_cover(self, key: str) -> str | None:
+    def uploaded_cover(self, key: str, source: bool = False) -> str | None:
         if not self.meta.enabled:
             return None
         for ext in ("jpg", "png"):
-            p = self.cover_target(key, ext)
+            p = self.cover_target(key, ext, source)
             if p.is_file():
                 return str(p)
         return None

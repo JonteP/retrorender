@@ -101,11 +101,15 @@ orörd. För delspår i en fil heter nyckeln `namn#2`, t.ex. `"jaiseqs#12" = "Dr
 Spelaren längst ner spelar i webbläsaren eller på en apparat i nätet. Play på en låt köar
 resten av albumet. Mellanslag pausar och spelar.
 
-**Omslag:** "Edit cover…" beskär en del av bilden (t.ex. bara framsidan av en
-fodralskanning) eller visar hela bilden med utfyllnad till en kvadrat. Resultatet sparas som
-en egen bild i `/meta` bredvid album.toml (`cover.jpg`, eller `<fil>.cover.jpg` för album i
-en enda fil) och går före rippens egen, som aldrig ändras. "Use the rip's own" tar bort den.
-"Covers: fill / whole image" i biblioteket väljer hur icke-kvadratiska omslag visas.
+**Omslag:** "Edit cover…" beskär valfri del av bilden. Med "Square crop" avstängd kan
+beskärningen ha vilken form som helst, och "Pad to a square" visar då hela den beskurna ytan
+med utfyllnad (en suddig kopia av bilden bakom). "Whole image" väljer hela bilden. En
+förhandsvisning visar resultatet. Bilden du väljer sparas oförändrad i `/meta`
+(`cover.source.*`) så att du kan beskära om från den; omslaget som görs av den sparas som
+`cover.jpg` (eller `<fil>.cover.jpg` för album i en enda fil) och går före rippens egen, som
+aldrig ändras. "Remove cover" / "Use the rip's own" tar bort omslaget men behåller din bild;
+"Forget my image" tar bort båda. "Covers: fill / whole image" i biblioteket väljer hur
+icke-kvadratiska omslag visas.
 
 **Album i flera delar:** ett spel vars ljud ligger i undermappar, som Wind Wakers `Stream/`
 och `Seqs/` eller Galaxys AST-filer och `Seqs/`, visas som ett album med en del per mapp

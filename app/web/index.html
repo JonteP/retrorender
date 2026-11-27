@@ -195,6 +195,8 @@
   .cbox i[data-h=sw] { left: -1px; bottom: -1px; cursor: nesw-resize; }
   .cbox i[data-h=se] { right: -1px; bottom: -1px; cursor: nwse-resize; }
   .cstage { overflow: hidden; }
+  .cprev { width: 180px; height: 180px; border-radius: 8px; border: 1px solid var(--line);
+    background: repeating-conic-gradient(#222 0 25%, #2c2c2c 0 50%) 0 0 / 16px 16px; }
   body.fitcovers .cover, body.fitcovers .thumb, body.fitcovers .nowcover, body.fitcovers .mosaic div {
     background-size: contain; background-repeat: no-repeat; }
   tr.drop td { box-shadow: inset 0 2px 0 var(--accent); }
@@ -1040,33 +1042,54 @@ function regenerateAlbum(a, i = 0) {
   };
 }
 
-// --- cover editor: crop a part of the image, or show all of it with padding ----------------
-// The result is made in the browser and uploaded like any cover, so TVs and Subsonic apps
-// get the same picture. The rip's own image is never changed.
-function editCover(a, file = null) {
+// --- cover editor: crop any part of the image, optionally padded to a square -----------------
+// The image you choose is kept in /meta as the one to crop from; the result is made in the
+// browser and uploaded as the album's cover, so TVs and Subsonic apps get the same picture.
+// The rip's own image is never changed.
+async function editCover(a) {
   const img = new Image();
-  let mode = "crop", square = true, box = null;          // box: crop rect in image pixels
-  const src = file ? URL.createObjectURL(file) : a.rip_cover ? `${coverUrl(a.id)}?original=1` : a.cover ? coverUrl(a.id) : null;
+  let square = true, pad = true, box = null;          // box: crop rect in image pixels
+  const src = a.cover_source || a.rip_cover ? `${coverUrl(a.id)}?original=1&t=${Date.now()}` : a.cover ? coverUrl(a.id) : null;
   modal(`<div class="row" style="justify-content:space-between"><h1>Cover</h1>
       <label class="button">Choose image…<input type="file" id="cfile" accept="image/jpeg,image/png,image/webp" hidden></label></div>
     ${src ? `<div class="row" style="margin:8px 0 12px">
-        <label><input type="radio" name="cmode" value="crop" checked> Crop</label>
-        <label><input type="radio" name="cmode" value="fit"> Show the whole image (padding)</label>
-        <label id="sqwrap"><input type="checkbox" id="csq" checked> Square</label>
+        <label><input type="checkbox" id="csq" checked> Square crop</label>
+        <label id="padwrap"><input type="checkbox" id="cpad" checked> Pad to a square (shows all of the crop)</label>
+        <button id="cwhole" style="padding:4px 10px">Whole image</button>
         <span class="muted" id="cinfo"></span></div>
-      <div class="cstage" id="cstage"><img id="cimg" alt=""><div class="cbox" id="cbox"><i data-h="nw"></i><i data-h="ne"></i><i data-h="sw"></i><i data-h="se"></i></div></div>`
+      <div class="row" style="align-items:flex-start;gap:20px">
+        <div class="cstage" id="cstage"><img id="cimg" alt=""><div class="cbox" id="cbox"><i data-h="nw"></i><i data-h="ne"></i><i data-h="sw"></i><i data-h="se"></i></div></div>
+        <div><div class="muted" style="margin-bottom:6px">Result</div><canvas id="cprev" width="180" height="180" class="cprev"></canvas></div>
+      </div>`
       : `<p class="muted">This album has no cover yet. Choose an image.</p>`}
     <div class="row" style="justify-content:space-between;margin-top:14px">
-      <div>${a.cover_uploaded ? `<button id="cdel" title="Remove your cover and use the rip's own image (if any)">Use the rip's own</button>` : ""}</div>
+      <div class="row">${a.cover_uploaded ? `<button id="cdel">${a.rip_cover ? "Use the rip's own" : "Remove cover"}</button>` : ""}
+        ${a.cover_source ? `<button id="cforget" title="Delete the image you chose (the cover made from it goes too)">Forget my image</button>` : ""}</div>
       <div class="row"><button onclick="closeModal()">Cancel</button>
         <button class="primary" id="csave" ${src ? "" : "disabled"}>Save cover</button></div></div>`, true);
-  $("#cfile").onchange = (e) => { if (e.target.files[0]) editCover(a, e.target.files[0]); };
-  if ($("#cdel")) $("#cdel").onclick = async () => {
-    try { await api(`album/${a.id}/cover/delete`, { method: "POST" }); closeModal(); toast("Using the rip's own cover"); setTimeout(route, 800); }
-    catch (err) { toast(err.message, true); }
+  $("#cfile").onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try {            // keep the chosen image as it is (as JPEG/PNG), then crop from it
+      const body = /image\/(jpeg|png)/.test(f.type) ? f : await new Promise((r) => {
+        const i = new Image(); i.onload = () => { const c = document.createElement("canvas");
+          c.width = i.naturalWidth; c.height = i.naturalHeight; c.getContext("2d").drawImage(i, 0, 0);
+          c.toBlob(r, "image/png"); }; i.src = URL.createObjectURL(f); });
+      await api(`album/${a.id}/cover?source=1`, { method: "POST", headers: { "Content-Type": body.type }, body });
+      editCover(Object.assign(a, { cover_source: true }));
+    } catch (err) { toast(err.message, true); }
   };
+  const remove = async (all) => {
+    try {
+      await api(`album/${a.id}/cover/delete${all ? "?all=1" : ""}`, { method: "POST" }); closeModal();
+      toast(all ? "Your image and the cover made from it are removed" : a.rip_cover ? "Using the rip's own cover" : "Cover removed");
+      setTimeout(route, 800);
+    } catch (err) { toast(err.message, true); }
+  };
+  if ($("#cdel")) $("#cdel").onclick = () => remove(false);
+  if ($("#cforget")) $("#cforget").onclick = () => confirm("Delete the image you chose for this album?") && remove(true);
   if (!src) return;
-  const stage = $("#cstage"), el = $("#cimg"), cb = $("#cbox");
+  const el = $("#cimg"), cb = $("#cbox");
   const scale = () => el.clientWidth / img.naturalWidth;
   const clamp = () => {
     const W = img.naturalWidth, H = img.naturalHeight;
@@ -1074,13 +1097,36 @@ function editCover(a, file = null) {
     if (square) box.w = box.h = Math.min(box.w, box.h);
     box.x = Math.max(0, Math.min(box.x, W - box.w)); box.y = Math.max(0, Math.min(box.y, H - box.h));
   };
+  // the cover as it will be saved: the crop, padded to a square over a blurred copy if wanted
+  const render = (c, max) => {
+    const g = c.getContext("2d"), padded = pad && Math.abs(box.w - box.h) > 1;
+    const k = Math.min(1, max / Math.max(box.w, box.h));
+    if (!padded) {
+      c.width = Math.round(box.w * k); c.height = Math.round(box.h * k);
+      g.drawImage(img, box.x, box.y, box.w, box.h, 0, 0, c.width, c.height);
+      return;
+    }
+    const side = Math.round(Math.max(box.w, box.h) * k), kb = side / Math.min(box.w, box.h);
+    c.width = c.height = side;
+    g.filter = "blur(24px) brightness(0.55)";
+    g.drawImage(img, box.x, box.y, box.w, box.h, (side - box.w * kb) / 2, (side - box.h * kb) / 2, box.w * kb, box.h * kb);
+    g.filter = "none";
+    g.drawImage(img, box.x, box.y, box.w, box.h, (side - box.w * k) / 2, (side - box.h * k) / 2, box.w * k, box.h * k);
+  };
+  let prevTimer = null;
   const draw = () => {
     const k = scale();
-    cb.hidden = mode !== "crop";
-    $("#sqwrap").style.visibility = mode === "crop" ? "visible" : "hidden";
     Object.assign(cb.style, { left: box.x * k + "px", top: box.y * k + "px", width: box.w * k + "px", height: box.h * k + "px" });
-    $("#cinfo").textContent = mode === "crop" ? `${Math.round(box.w)} × ${Math.round(box.h)} px` :
-      `${img.naturalWidth} × ${img.naturalHeight} px, padded to a square`;
+    $("#padwrap").style.visibility = square ? "hidden" : "visible";
+    $("#cinfo").textContent = `${Math.round(box.w)} × ${Math.round(box.h)} px`;
+    clearTimeout(prevTimer);
+    prevTimer = setTimeout(() => {
+      const t = document.createElement("canvas"); render(t, 360);
+      const p = $("#cprev"), g = p.getContext("2d");
+      g.clearRect(0, 0, p.width, p.height);
+      const k2 = Math.min(p.width / t.width, p.height / t.height);
+      g.drawImage(t, (p.width - t.width * k2) / 2, (p.height - t.height * k2) / 2, t.width * k2, t.height * k2);
+    }, 40);
   };
   img.onload = () => {
     el.src = img.src;
@@ -1091,8 +1137,12 @@ function editCover(a, file = null) {
   };
   img.onerror = () => toast("Could not load the image", true);
   img.src = src;
-  document.querySelectorAll("[name=cmode]").forEach((r) => (r.onchange = () => { mode = r.value; draw(); }));
   $("#csq").onchange = (e) => { square = e.target.checked; clamp(); draw(); };
+  $("#cpad").onchange = (e) => { pad = e.target.checked; draw(); };
+  $("#cwhole").onclick = () => {
+    square = false; $("#csq").checked = false;
+    box = { x: 0, y: 0, w: img.naturalWidth, h: img.naturalHeight }; draw();
+  };
   // drag the box to move it, drag a corner to resize
   let drag = null;
   cb.addEventListener("pointerdown", (e) => {
@@ -1104,31 +1154,17 @@ function editCover(a, file = null) {
     const k = scale(), dx = (e.clientX - drag.x) / k, dy = (e.clientY - drag.y) / k, b = drag.b;
     if (drag.h === "move") { box.x = b.x + dx; box.y = b.y + dy; }
     else {
-      let d = { x: drag.h.includes("w") ? dx : 0, y: drag.h.includes("n") ? dy : 0 };
       let w = b.w + (drag.h.includes("e") ? dx : -dx), h = b.h + (drag.h.includes("s") ? dy : -dy);
-      if (square) { w = h = Math.max(w, h); d = { x: drag.h.includes("w") ? b.w - w : 0, y: drag.h.includes("n") ? b.h - h : 0 }; }
-      box = { x: b.x + d.x, y: b.y + d.y, w, h };
+      if (square) w = h = Math.max(w, h);
+      box = { x: drag.h.includes("w") ? b.x + b.w - w : b.x, y: drag.h.includes("n") ? b.y + b.h - h : b.y, w, h };
     }
     clamp(); draw();
   });
   cb.addEventListener("pointerup", () => (drag = null));
   window.addEventListener("resize", () => box && draw());
   $("#csave").onclick = async () => {
-    const MAX = 1200, c = document.createElement("canvas"), g = c.getContext("2d");
-    const W = img.naturalWidth, H = img.naturalHeight;
-    if (mode === "crop") {
-      const k = Math.min(1, MAX / Math.max(box.w, box.h));
-      c.width = Math.round(box.w * k); c.height = Math.round(box.h * k);
-      g.drawImage(img, box.x, box.y, box.w, box.h, 0, 0, c.width, c.height);
-    } else {
-      const side = Math.min(MAX, Math.max(W, H)), k = side / Math.max(W, H);
-      c.width = c.height = side;
-      g.filter = "blur(24px) brightness(0.55)";               // the image itself, blurred, behind it
-      const kb = side / Math.min(W, H);
-      g.drawImage(img, (side - W * kb) / 2, (side - H * kb) / 2, W * kb, H * kb);
-      g.filter = "none";
-      g.drawImage(img, (side - W * k) / 2, (side - H * k) / 2, W * k, H * k);
-    }
+    const c = document.createElement("canvas");
+    render(c, 1200);
     const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.92));
     try {
       await api(`album/${a.id}/cover`, { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: blob });
