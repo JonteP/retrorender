@@ -3,6 +3,7 @@ playlist methods, with a fake engine so no audio libraries are needed
 (python3 tests/test_library.py)."""
 import io
 import json
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -299,12 +300,24 @@ TREE = ["Named_Boxarts/Tetris (Japan).png", "Named_Boxarts/Tetris (World) (Rev 1
 calls = []
 
 
-def fake_http(url, timeout=30):
+def tree(paths):
+    """GitHub's trees API: the top lists folders, a folder lists its files."""
+    folders = sorted({p.split("/")[0] for p in paths})
+    return {"HEAD": {"tree": [{"path": f, "type": "tree", "sha": f} for f in folders]},
+            **{f: {"tree": [{"path": p.split("/", 1)[1], "type": "blob"} for p in paths
+                            if p.startswith(f + "/")], "truncated": False} for f in folders}}
+
+
+TREES = {"Nintendo_-_Game_Boy": tree(TREE[:4]),
+         "Nintendo_-_Nintendo_Entertainment_System": tree(TREE[4:]),
+         "Nintendo_-_Family_Computer_Disk_System": tree(["Named_Boxarts/Super Mario Bros. 2 (Japan).png"])}
+
+
+def fake_http(url, timeout=30, max_bytes=None):
     calls.append(url)
-    if url.startswith("https://api.github.com/repos/libretro-thumbnails/Nintendo_-_Game_Boy/"):
-        return json.dumps({"tree": [{"path": p} for p in TREE]}).encode()
-    if url.startswith("https://api.github.com/repos/libretro-thumbnails/Nintendo_-_Nintendo_Entertainment_System/"):
-        return json.dumps({"tree": [{"path": p} for p in TREE[4:]]}).encode()
+    m = re.match(r"https://api.github.com/repos/libretro-thumbnails/([^/]+)/git/trees/(.+)", url)
+    if m and m.group(1) in TREES:
+        return json.dumps(TREES[m.group(1)][m.group(2)]).encode()
     if url.startswith("https://raw.githubusercontent.com/"):
         return png(40, 60)
     raise OSError("offline: " + url)
@@ -318,6 +331,11 @@ c = settings.covers()
 assert [h["name"] for h in lr.search("Game Boy", ["Tetris"], "boxart", c)] == ["Tetris (World) (Rev 1)"]
 assert [h["name"] for h in lr.search("Game Boy", ["Tetris"], "title", c)] == ["Tetris (World) (Rev 1)"]
 assert lr.search("Nintendo NES", ["Mega Man 2"], "boxart", c)[0]["name"].startswith("Mega Man 2 - Dr. Wily")
+# a sequel number must match: no Super Mario Bros. 2 (on the Disk System) for "… 3"
+assert lr.search("Nintendo NES", ["Super Mario Bros. 3"], "boxart", c) == []
+assert lr.search("Nintendo NES", ["Super Mario Bros. 2"], "boxart", c)[0]["system"].endswith("Disk System")
+# a release preferred for one album goes before the usual order
+assert lr.search("Game Boy", ["Tetris"], "boxart", dict(c, prefer="JP"))[0]["name"] == "Tetris (Japan)"
 assert not lr.known("Nintendo - Game Boy", "Named_Boxarts/../../etc/passwd")
 
 lib.settings = settings
@@ -335,11 +353,15 @@ assert len(calls) == n, calls[n:]
 settings.update("covers", {"libretro_type": "title"})
 fetcher.run_once()                       # another image type: fetched again
 assert fetcher.auto_info(tetris.key)["type"] == "title"
+settings.update("covers", {"libretro_type": "boxart", "album_regions": {tetris.key: "Japan"}})
+assert fetcher.refetch(tetris) and fetcher.auto_info(tetris.key)["name"] == "Tetris (Japan)"
+r1 = lib.cover_rev(tetris)
 settings.update("covers", {"order": ["rip", "libretro"], "enabled": ["rip"]})
 lib.apply_covers(tetris)
 assert tetris.cover is None              # libretro switched off
 settings.update("covers", {"enabled": ["rip", "libretro"], "shape": "pad"})
 lib.apply_covers(tetris)
+assert lib.cover_rev(tetris) != r1               # a new shape is a new URL for the browser
 try:
     import PIL  # noqa: F401
     data, ctype, _ = lib.cover_image(tetris)

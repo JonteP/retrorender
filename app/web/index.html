@@ -202,6 +202,8 @@
   .cand { cursor: pointer; font-size: 12px; color: var(--muted); }
   .cand div { aspect-ratio: 1; border-radius: 6px; border: 1px solid var(--line); background: var(--panel2) center/contain no-repeat; }
   .cand:hover div { border-color: var(--accent); }
+  body.covers-whole .cover, body.covers-whole .thumb, body.covers-whole .nowcover, body.covers-whole .mosaic div {
+    background-size: contain; background-repeat: no-repeat; }
   .srclist { list-style: none; padding: 0; margin: 8px 0; max-width: 640px; }
   .srclist li { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--line);
     border-radius: 8px; margin-bottom: 6px; background: var(--panel2); }
@@ -305,7 +307,8 @@ const store = {
 target = store.get("target", "browser");
 const post = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" },
   body: JSON.stringify(body || {}) });
-const coverUrl = (albumId) => `/api/cover/${albumId}`;
+// rev changes with the cover, so the browser fetches a new one instead of reusing it
+const coverUrl = (albumId, rev = "") => `/api/cover/${albumId}${rev ? "?v=" + rev : ""}`;
 const isRemote = () => target !== "browser";
 
 function saveQueue() { store.set("queue", { queue, qi, repeat, shuffled }); }
@@ -329,12 +332,12 @@ function setNow(t, extra = "") {
     : `<span class="muted">Not playing</span>`;
   const c = $("#nowcover");
   c.hidden = !(t && t.cover);
-  if (t && t.cover) c.style.backgroundImage = `url('${coverUrl(t.album_id)}')`;
+  if (t && t.cover) c.style.backgroundImage = `url('${coverUrl(t.album_id, t.cover_rev)}')`;
   document.querySelectorAll("[data-id]").forEach((r) => r.classList.toggle("playing", r.dataset.id === playingId));
   if ("mediaSession" in navigator && t) {
     try {
       navigator.mediaSession.metadata = new MediaMetadata({ title: t.title, artist: t.artist, album: t.album,
-        artwork: t.cover ? [{ src: coverUrl(t.album_id) }] : [] });
+        artwork: t.cover ? [{ src: coverUrl(t.album_id, t.cover_rev) }] : [] });
     } catch (e) { /* older browsers */ }
   }
   showControls();
@@ -526,7 +529,7 @@ function renderQueue() {
     </div>
     <div class="qlist">${queue.map((t, i) => `<div class="qitem ${i === qi ? "cur" : i < qi ? "past" : ""}" draggable="true" data-i="${i}">
         <span class="grip" title="Drag to move">⋮⋮</span>
-        <div class="thumb" ${t.cover ? `style="background-image:url('${coverUrl(t.album_id)}')"` : ""}>${t.cover ? "" : esc(initials(t.album))}</div>
+        <div class="thumb" ${t.cover ? `style="background-image:url('${coverUrl(t.album_id, t.cover_rev)}')"` : ""}>${t.cover ? "" : esc(initials(t.album))}</div>
         <div style="min-width:0"><div class="qt">${esc(t.title)}</div><div class="qs">${esc(t.album)} · ${esc(t.artist)}</div></div>
         <span class="muted mono">${fmt(t.duration)}</span>
         <button class="x" data-rm="${i}" title="Remove from the queue">✕</button></div>`).join("")
@@ -907,7 +910,7 @@ async function viewLibrary(v, q) {
   bindTracks(v, res.songs.slice(0, 30));
 }
 function albumCard(a) {
-  const cover = a.cover ? `style="background-image:url('${coverUrl(a.id)}')"` : "";
+  const cover = a.cover ? `style="background-image:url('${coverUrl(a.id, a.cover_rev)}')"` : "";
   return `<a class="album" href="#/album/${a.id}">
     <div class="cover" ${cover}>${a.cover ? "" : `<div class="ph">${esc(a.platform)}<br><b>${esc(initials(a.name))}</b></div>`}
       <button class="cplay" data-album="${a.id}" title="Play the album">▶</button></div>
@@ -953,7 +956,7 @@ async function viewAlbum(v, id) {
   v.innerHTML = `
     <div class="ahead">
       <div>
-        <div class="cover" id="acover" ${a.cover ? `style="background-image:url('${coverUrl(a.id)}?t=${Date.now()}')"` : ""}>
+        <div class="cover" id="acover" ${a.cover ? `style="background-image:url('${coverUrl(a.id, a.cover_rev)}')"` : ""}>
           ${a.cover ? "" : `<div class="ph">${esc(a.platform)}<br><b>${esc(initials(a.name))}</b></div>`}</div>
         ${a.writable ? `<div class="row" style="margin-top:8px">
           <button id="coverEdit" style="padding:4px 10px;font-size:13px">${a.cover ? "Edit cover…" : "Add cover…"}</button></div>` : ""}
@@ -1083,6 +1086,9 @@ async function editCover(a) {
     ${useSources ? `<h2 style="margin-top:20px">From libretro-thumbnails</h2>
       <div class="row">
         <select class="sort" id="ctype">${Object.entries(TYPE_LABEL).map(([k, l]) => `<option value="${k}" ${k === cs.libretro_type ? "selected" : ""}>${l}</option>`).join("")}</select>
+        <select class="sort" id="cregion" title="Which release's cover this album gets">
+          ${[["", "Release: automatic"], ["USA", "Release: USA"], ["Europe", "Release: Europe"], ["Japan", "Release: Japan"], ["World", "Release: World"], ["Korea", "Release: Korea"]]
+            .map(([k, l]) => `<option value="${k}" ${(cs.album_regions || {})[a.key] === k || (!k && !(cs.album_regions || {})[a.key]) ? "selected" : ""}>${l}</option>`).join("")}</select>
         <input type="search" id="cq" placeholder="Search another name (Enter)" style="flex:1;min-width:200px">
         <span class="muted" id="cstat"></span></div>
       <div class="cands" id="cands"></div>` : ""}
@@ -1120,7 +1126,7 @@ async function editCover(a) {
     $("#cstat").textContent = "Searching…"; $("#cands").innerHTML = "";
     try {
       const r = await api(`album/${a.id}/cover/candidates?type=${type}${qv ? "&q=" + encodeURIComponent(qv) : ""}`);
-      $("#cstat").textContent = r.error ? r.error : r.candidates.length ? "" :
+      $("#cstat").textContent = r.candidates.length ? "" : r.error ? r.error :
         r.systems && r.systems.length ? `Nothing found in ${r.systems.join(", ")}` : `libretro has no console matching “${a.platform}”`;
       $("#cands").innerHTML = r.candidates.map((c, i) => `<div class="cand" data-c="${i}" title="${esc(c.system)}">
         <div style="background-image:url('${c.url}')"></div>${esc(c.name)}</div>`).join("");
@@ -1138,6 +1144,16 @@ async function editCover(a) {
     } catch (err) { $("#cstat").textContent = err.message; }
   };
   if (useSources) {
+    $("#cregion").onchange = async (e) => {
+      $("#cstat").textContent = "Fetching…";
+      try {
+        const r = await post(`album/${a.id}/cover/region`, { region: e.target.value });
+        const reg = e.target.value, hit = r.found && (!reg || r.info.name.includes(reg));
+        toast(hit ? `Cover: ${r.info.name}` : `No ${reg} release under this name${r.found ? ` (using ${r.info.name})` : ""}. ` +
+          "If it is called something else there, search for that name below and pick it.", !hit);
+        reopen(); route();
+      } catch (err) { toast(err.message, true); }
+    };
     $("#ctype").onchange = loadCands;
     $("#cq").onkeydown = (e) => { if (e.key === "Enter") loadCands(); };
     loadCands();
@@ -1249,8 +1265,10 @@ async function viewSettings(v) {
         <div class="opts"><b>Images that are not square</b>
           <label><input type="radio" name="shape" value="crop" ${c.shape === "crop" ? "checked" : ""}> Crop to a square (the middle)</label>
           <label><input type="radio" name="shape" value="pad" ${c.shape === "pad" ? "checked" : ""}> Pad to a square (all of the image)</label>
-          <label><input type="radio" name="shape" value="original" ${c.shape === "original" ? "checked" : ""}> Leave as they are</label>
-          <p class="muted" style="margin:6px 0 0">Also where the cover editor starts. ${s.pillow ? "" : "<b>Pillow is missing, so images are served as they are.</b>"}</p></div>
+          <label><input type="radio" name="shape" value="original" ${c.shape === "original" ? "checked" : ""}> Leave them unchanged</label>
+          <p class="muted" style="margin:6px 0 0">Unchanged: here they are shown whole with empty space
+            around them; TVs and Subsonic apps get the image as it is and decide themselves (most crop it).
+            The choice is also where the cover editor starts. ${s.pillow ? "" : "<b>Pillow is missing, so images are served as they are.</b>"}</p></div>
       </div>
       <div class="opts" style="margin-top:14px">
         <label><input type="checkbox" id="cauto" ${c.auto ? "checked" : ""}> Fetch covers automatically (after each library scan)</label>
@@ -1282,6 +1300,8 @@ async function viewSettings(v) {
     $("#cstatus").textContent = x.running ? `Fetching… ${x.checked} of ${x.total} albums checked, ${x.found} found`
       : x.last_run ? `Last run ${x.last_run}: ${x.found} found, ${x.missing} not found${x.errors ? `, ${x.errors} errors (${x.last_error})` : ""}.`
       : "Not run yet.";
+    const le = Object.entries(x.listing_errors || {});
+    if (le.length) $("#cstatus").textContent += " Could not list: " + le.map(([k, v]) => `${k} (${v})`).join(", ");
   };
   showStatus(st);
   const poll = setInterval(async () => {
@@ -1293,7 +1313,10 @@ async function viewSettings(v) {
       libretro_type: document.querySelector("[name=ltype]:checked").value,
       shape: document.querySelector("[name=shape]:checked").value,
       regions: $("#cregions").value.split(",").map((x) => x.trim()).filter(Boolean) } };
-    try { const r = await post("settings", body); showStatus(r.status); toast("Saved"); }
+    try {
+      const r = await post("settings", body); showStatus(r.status); toast("Saved");
+      document.body.classList.toggle("covers-whole", r.covers.shape === "original");
+    }
     catch (e) { toast(e.message, true); }
   };
   const fetchNow = (retry) => async () => {
@@ -1528,6 +1551,7 @@ async function refreshVersion() {
 }
 refreshVersion();
 setInterval(() => { if (!document.hidden) refreshVersion(); }, 60000);
+api("settings").then((s) => document.body.classList.toggle("covers-whole", s.covers.shape === "original")).catch(() => {});
 restoreQueue();
 route();
 loadDevices();
