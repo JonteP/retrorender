@@ -91,7 +91,7 @@ webbgränssnittet (kollas var femte minut, `[updates]` i config.toml). Starta d�
   varför). Albumets ⋯ öppnar `album.toml` (valideras innan den sparas), titelkartan,
   "Export !tags.m3u" och "Regenerate…".
 - **Playlists:** se [Kö och spellistor](#kö-och-spellistor).
-- **joshw:** se [joshw.info](#joshwinfo).
+- **Onlinebibliotek:** se [Onlinebibliotek](#onlinebibliotek).
 - **Catalog:** dolda dubbletter, album med samma spelnyckel och spelnycklar per album.
 
 **Byta namn på en låt:** titeln skrivs till albumets `titles.toml` (så den överlever
@@ -269,8 +269,9 @@ Nintendo, Sega, Sony med flera, ett arkiv per spel); fler kommer.
 Filerna hamnar i `/library/_synced/<källa>/<system>/<arkivnamn>/` med en `.source.json`.
 Hänsyn mot källorna: en nedladdning i taget, `delay_s` sekunders paus mellan anrop,
 listorna läses om högst var `refresh_hours` (`[joshw]` i config.toml). Kräver skrivbar
-`/library/_synced` (ägd av 568:568). Vyn **joshw** i menyn finns kvar som lista över
-nedladdningar.
+`/library/_synced` (ägd av 568:568). Under Settings → Online libraries → **Downloads**
+finns allt som ligger i cachen, är tillagt eller misslyckades, med storlek, när det senast
+spelades och knappar för att behålla, ta bort eller försöka igen.
 
 ## Subsonic och Music Assistant
 

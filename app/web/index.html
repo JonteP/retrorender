@@ -240,7 +240,6 @@
     <a href="#/" data-nav="overview">Overview</a>
     <a href="#/library" data-nav="library">Library</a>
     <a href="#/playlists" data-nav="playlists">Playlists</a>
-    <a href="#/joshw" data-nav="joshw">joshw</a>
     <a href="#/settings" data-nav="settings">Settings</a>
     <a href="#/catalog" data-nav="catalog">Catalog</a>
   </nav>
@@ -759,9 +758,24 @@ function parseHash() {
   const [path, qs] = h.split("?");
   return { parts: path.split("/").filter(Boolean), q: new URLSearchParams(qs || "") };
 }
+// Each tab remembers where you were (an album, filters, a playlist) and the scroll position,
+// so going to Settings and back to Library lands on the same album. Clicking the tab you
+// are already on goes to its start.
+const SECTION = { library: "library", album: "library", online: "library", playlists: "playlists", playlist: "playlists" };
+const lastHash = {}, scrollAt = {};
+let curHash = location.hash;
+document.querySelector("nav").addEventListener("click", (e) => {
+  const a = e.target.closest("a[data-nav]");
+  if (!a) return;
+  const sec = a.dataset.nav, here = SECTION[(parseHash().parts[0] || "")];
+  if (sec !== here && lastHash[sec] && lastHash[sec] !== location.hash) { e.preventDefault(); location.hash = lastHash[sec]; }
+});
 async function route() {
   const { parts, q } = parseHash();
   const page = parts[0] || "overview";
+  scrollAt[curHash] = window.scrollY;
+  curHash = location.hash;
+  if (SECTION[page]) lastHash[SECTION[page]] = location.hash;
   document.querySelectorAll("nav a").forEach((a) =>
     a.classList.toggle("on", a.dataset.nav === ({ album: "library", online: "library", playlist: "playlists" }[page] || page)));
   const v = $("#view");
@@ -772,10 +786,11 @@ async function route() {
     else if (page === "playlists") await viewPlaylists(v);
     else if (page === "playlist") await viewPlaylist(v, parts[1]);
     else if (page === "catalog") await viewCatalog(v);
-    else if (page === "joshw") await viewJoshw(v, q);
+    else if (page === "joshw") { location.replace("#/settings"); return; }
     else if (page === "settings") await viewSettings(v);
     else await viewOverview(v);
   } catch (e) { v.innerHTML = `<div class="card"><b>Error:</b> ${esc(e.message)}</div>`; }
+  if (location.hash === curHash) window.scrollTo(0, scrollAt[curHash] || 0);
 }
 window.addEventListener("hashchange", () => { closeModal(); route(); });
 
@@ -1399,6 +1414,14 @@ async function viewSettings(v) {
         <span style="flex:1"></span>
         <button id="orefresh">Read the lists again</button></div>
       <p class="muted" id="ostatus"></p>
+      <h2 style="margin-top:22px">Downloads</h2>
+      <div class="row" style="margin-bottom:8px">
+        <select class="sort" id="dstate">
+          <option value="temporary">In the cache</option><option value="pinned">Added to the library</option>
+          <option value="error">Failed</option></select>
+        <span class="muted" id="dcount"></span></div>
+      <div id="dlist"></div>
+      <details style="margin-top:14px"><summary class="muted">Activity</summary><pre class="mono muted" id="olog" style="white-space:pre-wrap"></pre></details>
     </section>` : ""}`;
   const drawSrcs = () => {
     $("#srcs").innerHTML = `<li><span class="grow"><b>Your own cover</b> <span class="muted">· always first</span></span></li>` +
@@ -1475,8 +1498,43 @@ function settingsOnline(s) {
   const show = (st) => {
     $("#ostatus").textContent = st.current ? `Downloading ${st.current.name}…` :
       st.log && st.log.length ? st.log[st.log.length - 1] : "";
+    $("#olog").textContent = (st.log || []).slice().reverse().join("\n");
   };
   show(s.online.status);
+  const ago = (t) => {
+    if (!t) return "never";
+    const d = (Date.now() / 1000 - t) / 86400;
+    return d < 1 ? "today" : d < 2 ? "yesterday" : `${Math.floor(d)} days ago`;
+  };
+  const mb = (b) => (b >= 1024 ** 3 ? (b / 1024 ** 3).toFixed(1) + " GB" : Math.max(1, Math.round(b / 1024 ** 2)) + " MB");
+  const loadDownloads = async () => {
+    const state = $("#dstate").value;
+    const r = await api(`online/search?state=${state}&limit=500&sizes=1&order=played`);
+    if (!$("#dcount")) return;                      // the page was left meanwhile
+    $("#dcount").textContent = `${r.total} ${r.total === 1 ? "album" : "albums"}` +
+      (state !== "error" ? ` · ${mb(r.rows.reduce((n, x) => n + (x.bytes || 0), 0))}` : "");
+    $("#dlist").innerHTML = r.rows.length ? `<table><tbody>${r.rows.map((x) => `<tr>
+        <td>${x.albums && x.albums.length ? `<a class="link" href="#/album/${x.albums[0].id}">${esc(x.title)}</a>` : esc(x.title)}
+          <div class="muted">${esc(x.platform)}${state === "error" ? " · " + esc(x.error || "") : ""}</div></td>
+        <td class="muted">${state === "error" ? esc(x.size || "") : mb(x.bytes || 0)}</td>
+        <td class="muted">${state === "error" ? "" : "played " + ago(x.last_played)}</td>
+        <td class="actions" style="white-space:nowrap">${
+          state === "temporary" ? `<button data-a="pin" data-id="${x.id}">Keep</button> <button data-a="remove" data-id="${x.id}">Remove</button>`
+          : state === "pinned" ? `<button data-a="unpin" data-id="${x.id}" title="Back to the cache: removed when it is full">Move to cache</button> <button data-a="remove" data-id="${x.id}">Remove</button>`
+          : `<button data-a="fetch" data-id="${x.id}">Try again</button>`}</td></tr>`).join("")}</tbody></table>`
+      : `<p class="muted">Nothing here.</p>`;
+    $("#dlist").querySelectorAll("[data-a]").forEach((b) => (b.onclick = async () => {
+      const row = r.rows.find((x) => x.id === +b.dataset.id);
+      if (b.dataset.a === "remove" && state === "pinned" && !confirm(`Remove “${row.title}” from the library? It stays in the online library.`)) return;
+      try { await post(`online/${b.dataset.id}/${b.dataset.a}`); loadDownloads(); } catch (e) { toast(e.message, true); }
+    }));
+  };
+  $("#dstate").onchange = loadDownloads;
+  loadDownloads();
+  const opoll = setInterval(async () => {
+    if (!document.body.contains($("#ostatus"))) return clearInterval(opoll);
+    try { show(await api("online/status")); } catch (e) { /* later */ }
+  }, 4000);
   $("#osave").onclick = async () => {
     const sources = {};
     for (const [k, c] of Object.entries(src)) sources[k] = { enabled: c.enabled, systems: c.systems };
@@ -1486,7 +1544,7 @@ function settingsOnline(s) {
     } catch (e) { toast(e.message, true); }
   };
   $("#orefresh").onclick = async () => {
-    try { await post("joshw/refresh?force=1"); toast("Reading the lists in the background"); } catch (e) { toast(e.message, true); }
+    try { await post("online/refresh?force=1"); toast("Reading the lists in the background"); } catch (e) { toast(e.message, true); }
   };
 }
 
@@ -1598,104 +1656,6 @@ async function viewCatalog(v) {
       ${c.albums.slice(0, 500).map((a) => `<tr><td>${esc(a.name)}</td><td>${esc(a.platform)}</td><td>${esc(a.region)}</td>
         <td>${esc(a.chips.join(", "))}</td><td class="mono muted">${esc(a.game_key)}</td></tr>`).join("")}
       </tbody></table>${c.albums.length > 500 ? `<p class="muted">Showing 500 of ${c.albums.length}.</p>` : ""}</section>`;
-}
-
-// --- joshw ---------------------------------------------------------------------------------
-let joshwTimer = null, joshwPolls = 0;
-async function viewJoshw(v, q) {
-  clearTimeout(joshwTimer);
-  const st = await api("joshw/status");
-  if (!st.enabled) {
-    v.innerHTML = `<h1>joshw</h1><div class="card"><p>joshw sync is turned off. Enable it in config.toml:</p>
-      <pre class="mono">[joshw]\nenabled = true\nsystems = ["wii", "gcn", "nsf"]</pre>
-      <p class="muted">and mount <span class="mono">/library/_synced</span> writable.</p></div>`;
-    return;
-  }
-  const system = q.get("system") || st.systems[0]?.system || "";
-  const params = new URLSearchParams({ system, q: q.get("q") || "", state: q.get("state") || "",
-    offset: q.get("offset") || "0", limit: "100" });
-  const res = await api("joshw/search?" + params);
-  const link = (k, val) => { const p = new URLSearchParams(q); val ? p.set(k, val) : p.delete(k);
-    if (k !== "offset") p.delete("offset"); return "#/joshw?" + p; };
-  const sys = st.systems.find((x) => x.system === system) || {};
-  const when = (t) => t ? new Date(t * 1000).toLocaleString() : "never";
-  const cur = st.current;
-  const pct = cur && cur.total ? Math.round((100 * cur.done) / cur.total) : null;
-  const stateTabs = [["", "All"], ["pinned", "In library"], ["temporary", "Temporary"], ["remote", "Not downloaded"]];
-  v.innerHTML = `
-    <div class="row" style="justify-content:space-between">
-      <div><h1>joshw</h1><span class="muted">Game music rips from joshw.info. Listen fetches a game temporarily; Add keeps it in your library.</span></div>
-      <button id="refresh">Refresh lists</button></div>
-    ${st.writable ? "" : `<div class="warnbox">/library/_synced is not writable, so nothing can be downloaded.</div>`}
-    <div class="tabs">${st.systems.map((x) => `<a href="${link("system", x.system)}" class="${x.system === system ? "on" : ""}">
-      ${esc(x.platform)} <span class="muted">${x.listed}</span></a>`).join("")}</div>
-    <div class="grid" style="grid-template-columns:2fr 1fr;margin-bottom:16px">
-      <div class="card">
-        <div class="row">
-          <input type="search" id="jq" placeholder="Search ${esc(sys.platform || "")} by title, developer, publisher" value="${esc(q.get("q") || "")}" style="flex:1">
-        </div>
-        <div class="tabs" style="margin-bottom:0">${stateTabs.map(([k, label]) =>
-          `<a href="${link("state", k)}" class="${(q.get("state") || "") === k ? "on" : ""}">${label}</a>`).join("")}</div>
-      </div>
-      <div class="card">
-        <div class="stat"><span>Listed</span><b>${sys.listed ?? 0}</b></div>
-        <div class="stat"><span>In library / temporary</span><b>${sys.pinned ?? 0} / ${sys.temporary ?? 0}</b></div>
-        <div class="stat"><span>List refreshed</span><b>${esc(when(sys.refreshed))}</b></div>
-        ${sys.error ? `<p style="color:var(--bad)">${esc(sys.error)}</p>` : ""}
-        ${cur ? `<p style="margin:8px 0 0">Downloading <b>${esc(cur.name)}</b>${pct != null ? ` · ${pct}%` : ""}</p>
-          <div class="bar"><div style="width:${pct || 3}%"></div></div>` : st.queued ? `<p>${st.queued} queued</p>` : ""}
-        <details style="margin-top:8px"><summary>Activity</summary>
-          <pre class="mono muted" style="white-space:pre-wrap">${esc(st.log.join("\n"))}</pre></details>
-      </div>
-    </div>
-    <section class="card">
-      <p class="muted" style="margin-top:0">${res.total} archives${res.total > 100 ? ", showing " + (+params.get("offset") + 1) + "–" + Math.min(res.total, +params.get("offset") + 100) : ""}.
-        Temporary downloads above ${st.temp_limit_gb} GB are removed, least recently played first.</p>
-      <table><thead><tr><th>Game</th><th>Released</th><th>Developer / publisher</th><th style="text-align:right">Size</th><th></th></tr></thead>
-      <tbody>${res.rows.map(remoteRow).join("") || `<tr><td colspan="5" class="muted">${sys.listed ? "Nothing matches." : "The list has not been read yet. Click Refresh lists."}</td></tr>`}</tbody></table>
-      <div class="row" style="justify-content:space-between;margin-top:12px">
-        ${+params.get("offset") > 0 ? `<a class="link" href="${link("offset", String(Math.max(0, +params.get("offset") - 100)))}">← Previous</a>` : "<span></span>"}
-        ${+params.get("offset") + 100 < res.total ? `<a class="link" href="${link("offset", String(+params.get("offset") + 100))}">Next →</a>` : ""}
-      </div>
-    </section>`;
-  $("#jq").onkeydown = (e) => { if (e.key === "Enter") location.hash = link("q", e.target.value.trim()); };
-  $("#refresh").onclick = async () => { await api("joshw/refresh?force=1&system=" + encodeURIComponent(system), { method: "POST" });
-    toast("Reading the list – this takes a while"); setTimeout(route, 1500); };
-  v.querySelectorAll("button[data-act]").forEach((b) => (b.onclick = async () => {
-    const [id, act] = [b.dataset.id, b.dataset.act];
-    if (act === "remove" && !confirm("Remove the downloaded files for this game?")) return;
-    try {
-      const path = act === "listen" ? `joshw/${id}/fetch?pin=0` : act === "add" ? `joshw/${id}/fetch?pin=1` : `joshw/${id}/${act}`;
-      await api(path, { method: "POST" });
-      toast({ listen: "Queued – it will be ready in a moment", add: "Queued for your library", pin: "Kept in your library",
-        unpin: "Marked as temporary", remove: "Removed" }[act]);
-      route();
-    } catch (e) { toast(e.message, true); }
-  }));
-  const busy = cur || st.queued || res.rows.some((r) => r.state === "queued" || r.state === "downloading");
-  // after a download the index is rebuilt in the background; poll a little longer for the Open link
-  const indexing = res.rows.some((r) => (r.state === "temporary" || r.state === "pinned") && !r.albums.length);
-  joshwPolls = busy ? 0 : joshwPolls + 1;
-  if (busy || (indexing && joshwPolls < 10))
-    joshwTimer = setTimeout(() => { if (location.hash.startsWith("#/joshw")) route(); }, 3000);
-}
-function remoteRow(r) {
-  const btn = (act, label, cls = "") => `<button class="${cls}" data-id="${r.id}" data-act="${act}">${label}</button>`;
-  const open = r.albums.length ? r.albums.map((a) => `<a class="link" href="#/album/${a.id}">Open</a>`).join(" ") : "";
-  const actions = {
-    remote: btn("listen", "Listen") + " " + btn("add", "Add", "primary"),
-    queued: `<span class="muted">queued…</span>`,
-    downloading: `<span class="muted">downloading…</span>`,
-    temporary: `${open} ${btn("pin", "Keep", "primary")} ${btn("remove", "Remove")}`,
-    pinned: `${open} <span class="chip ok">in library</span> ${btn("unpin", "Unkeep")} ${btn("remove", "Remove", "danger")}`,
-    error: `<span style="color:var(--bad)" title="${esc(r.error)}">failed</span> ${btn("listen", "Retry")}`,
-  }[r.state] || "";
-  const tags = (r.tags ? r.tags.split(",") : []).map((t) => `<span class="chip">${esc(t)}</span>`).join(" ");
-  return `<tr><td><b>${esc(r.title)}</b> ${tags} ${r.in_library ? `<span class="chip warn" title="An album with this title already exists in your own library">already have it</span>` : ""}
-      ${r.alt_title ? `<div class="muted">${esc(r.alt_title)}</div>` : ""}</td>
-    <td class="muted">${esc(r.date)}</td>
-    <td class="muted">${esc([r.developer, r.publisher].filter(Boolean).join(" / "))}</td>
-    <td class="len">${esc(r.size)}</td><td class="actions">${actions}</td></tr>`;
 }
 
 const verText = (s) => `v${s.version} · ${s.build?.commit || "local"}`;

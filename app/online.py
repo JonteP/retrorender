@@ -520,13 +520,16 @@ class Online:
 
     def search(self, system: str = "", q: str = "", state: str = "", offset: int = 0,
                limit: int = 100, source: str = "", not_local: bool = False,
-               platform: str = "", year: str = "") -> tuple[int, list[dict]]:
-        """Entries of the switched-on sources and systems."""
+               platform: str = "", year: str = "", any_system: bool = False,
+               order: str = "title") -> tuple[int, list[dict]]:
+        """Entries of the switched-on sources and systems (any_system: also ones switched
+        off since, e.g. downloads made before)."""
         pairs = self.active()
-        if not pairs:
+        if not pairs and not any_system:
             return 0, []
-        where = ["(" + " OR ".join("(source=? AND system=?)" for _ in pairs) + ")"]
-        args: list = [x for p in pairs for x in p]
+        where = ["1"] if any_system else \
+            ["(" + " OR ".join("(source=? AND system=?)" for _ in pairs) + ")"]
+        args: list = [] if any_system else [x for p in pairs for x in p]
         if source:
             where.append("source=?"); args.append(source)
         if system:
@@ -551,7 +554,8 @@ class Online:
         w = " AND ".join(where)
         total = self._q1(f"SELECT count(*) FROM remote WHERE {w}", tuple(args))[0]
         rows = self._qa(f"SELECT {', '.join(self.COLS)} FROM remote WHERE {w}"
-                        " ORDER BY title COLLATE NOCASE LIMIT ? OFFSET ?",
+                        f" ORDER BY {'last_played DESC' if order == 'played' else 'title COLLATE NOCASE'}"
+                        " LIMIT ? OFFSET ?",
                         tuple(args) + (limit, offset))
         return total, [dict(zip(self.COLS, r)) for r in rows]
 
