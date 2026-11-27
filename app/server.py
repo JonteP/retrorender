@@ -43,7 +43,7 @@ from policy import plan, settings_for, shape
 from subsonic import Subsonic
 from web import WebUI
 
-VERSION = "0.16.3"
+VERSION = "0.16.4"
 BUILD = {"commit": os.environ.get("RETRO_BUILD_COMMIT", "local")[:7],
          "date": os.environ.get("RETRO_BUILD_DATE", "")}
 
@@ -90,6 +90,7 @@ SETTINGS = Settings(META.root if META.enabled else None, META.writable)
 JOSHW = Online(CFG, CAT, LIBRARY, settings=SETTINGS,
                on_change=lambda: threading.Thread(target=LIB.scan, daemon=True).start())
 LIB.synced_platform = JOSHW.platform
+JOSHW.playable_exts = {e for eng in REG.engines for e in eng.extensions}
 SUB.on_star = JOSHW.pin_dir
 
 
