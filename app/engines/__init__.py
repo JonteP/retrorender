@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -11,6 +12,7 @@ from .libvgm import LibvgmEngine
 from .openmpt import OpenmptEngine
 from .sidplay import SidplayEngine
 from .vgmstream import VgmstreamEngine
+from .xsf import XsfEngine
 
 VGM_EXT = (".vgm", ".vgz")
 
@@ -35,7 +37,12 @@ class Registry:
             SidplayEngine(sr, cli=eng.get("sidplayfp_cli", "sidplayfp"),
                           songlengths=eng.get("songlengths"), stil=eng.get("stil")),
             JAudioEngine(sr, fx_send=float(eng.get("jaudio_fx_send", 0.35))),
+            XsfEngine(sr, cli=eng.get("xsfplay_cli", "xsfplay"), bios=eng.get("psx_bios"),
+                      meta_dir=os.environ.get("RETRO_META", cfg.get("meta_dir", "/meta")),
+                      ds_jit=bool(eng.get("xsf_ds_jit", False)),
+                      psx_dma=str(eng.get("psx_dma", "harsh"))),
         ]
+        self.xsf = candidates[-1]
         self.engines = [e for e in candidates if e.available()]
         self.missing = [e.name for e in candidates if not e.available()]
         self.by_ext: dict[str, Engine] = {}
@@ -47,6 +54,9 @@ class Registry:
         d = {"vgm_engine": self.vgm_mode}
         if self.libvgm.available():
             d["vgm2wav_help"] = self.libvgm.selftest()
+        if self.xsf.available():
+            b = self.xsf.bios()
+            d["psx_bios"] = str(b) if b else self.xsf.bios_hint()
         return d
 
     def for_path(self, path: Path) -> Optional[Engine]:

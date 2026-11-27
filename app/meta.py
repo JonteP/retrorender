@@ -605,10 +605,13 @@ class MetaStore:
             length = float(entry["length_s"])
             fade = float(entry.get("fade_s", 0) or 0)
             extra = dict(track.extra or {})
+            extra.pop("fade_at_end", None)
+            extra.pop("fade_s", None)
             if fade > 0:
                 # NEZplug semantics: play length_s, then fade out over fade_s
                 length += fade
                 extra["fade_at_end"] = True
+                extra["fade_s"] = fade
             changes.update(length_s=length, intro_s=None, loop_s=None, extra=extra)
         if "loop_s" in entry:
             changes.update(loop_s=float(entry["loop_s"]),

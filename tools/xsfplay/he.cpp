@@ -1,0 +1,80 @@
+// xsfplay backend: PS1 / PS2: Highly Experimental
+
+#include "xsfplay.h"
+
+extern "C" {
+#include "psf2fs.h"
+#include "Core/psx.h"
+#include "Core/iop.h"
+#include "Core/bios.h"
+#include "Core/mkhebios.h"
+}
+
+static std::vector<uint8_t> read_file(const char *path) {
+    std::vector<uint8_t> d;
+    FILE *f = fopen(path, "rb");
+    if (!f) return d;
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (n > 0) {
+        d.resize((size_t)n);
+        if (fread(d.data(), 1, d.size(), f) != d.size()) d.clear();
+    }
+    fclose(f);
+    return d;
+}
+
+static int psf1_cb(void *ctx, const uint8_t *exe, size_t exe_size, const uint8_t *, size_t) {
+    return psx_upload_psxexe(ctx, (void *)exe, (uint32_t)exe_size) < 0 ? -1 : 0;
+}
+
+struct HE : Backend {
+    std::vector<uint8_t> state;
+    void *fs = nullptr;
+    int version;
+    HE(const char *path, int ver, const Options &o, const Tags &t) : version(ver) {
+        if (!o.bios) die("PS1/PS2 needs a BIOS image (hebios.bin or a PS2 BIOS)");
+        static std::vector<uint8_t> image = read_file(o.bios);
+        if (image.empty()) die("cannot read the BIOS image %s", o.bios);
+        // A full PS2 BIOS (4 MB) is cut down to the modules HE needs; hebios.bin is used as is.
+        if (image.size() >= 0x400000) {
+            int size = 0;
+            void *he = mkhebios_create(image.data(), &size);
+            if (!he || size <= 0) die("%s is not a PS2 BIOS that HE can use", o.bios);
+            image.assign((uint8_t *)he, (uint8_t *)he + size);
+            mkhebios_delete(he);
+        }
+        bios_set_image(image.data(), (uint32_t)image.size());
+        if (psx_init()) die("the PS1/PS2 core did not start");
+        state.resize(psx_get_state_size(ver));
+        psx_clear_state(state.data(), ver);
+        if (ver == 1) {
+            load(path, 1, psf1_cb, state.data());
+            if (t.refresh) psx_set_refresh(state.data(), t.refresh);
+        } else {
+            fs = psf2fs_create();
+            load(path, 2, psf2fs_load_callback, fs);
+            psx_set_readfile(state.data(), (psx_readfile_t)psf2fs_virtual_readfile, fs);
+            if (t.refresh) psx_set_refresh(state.data(), t.refresh);
+        }
+        iop_set_compat(psx_get_iop_state(state.data()), o.harsh ? IOP_COMPAT_HARSH : IOP_COMPAT_FRIENDLY);
+    }
+    ~HE() { if (fs) psf2fs_delete(fs); }
+    int rate() override { return version == 1 ? 44100 : 48000; }
+    size_t render(int16_t *buf, size_t frames) override {
+        size_t done = 0;
+        while (done < frames) {
+            uint32_t n = (uint32_t)(frames - done);
+            sint32 r = psx_execute(state.data(), 0x7FFFFFFF, buf + done * 2, &n, 0);
+            if (r < -1) die("the PS1/PS2 program crashed");
+            done += n;
+            if (r == -1) break;          // PS2 program halted
+        }
+        return done;
+    }
+};
+
+Backend *make_he(const char *path, int version, const Options &o, const Tags &t) {
+    return new HE(path, version, o, t);
+}
