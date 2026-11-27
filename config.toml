@@ -75,7 +75,8 @@ user = "musicassistant"
 password = "byt-mig"
 rescan_minutes = 60     # how often the library is re-indexed
 
-# Downloads from joshw.info (web UI: joshw). Requires /library/_synced to be writable.
+# Downloads from joshw.info. The Settings page (Online libraries) overrides enabled,
+# systems and temp_limit_gb. Requires /library/_synced to be writable.
 [joshw]
 enabled = false
 systems = ["wii", "gcn", "nsf"]   # subdomains of joshw.info, e.g. spc, smd, usf, psf, gbs

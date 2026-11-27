@@ -117,6 +117,10 @@ class Settings:
             new = {**old, **values}
             if section == "covers":
                 self._check_covers(new)
+            elif section == "online":
+                self._check_online(new)
+            else:
+                raise ValueError(f"unknown section {section}")
             self._data[section] = new
             text = dumps(self._data)
             tomllib.loads(text)
@@ -129,6 +133,17 @@ class Settings:
             except Exception:       # noqa: BLE001 - a listener must not break saving
                 log.exception("settings listener failed")
         return new
+
+    @staticmethod
+    def _check_online(c: dict):
+        lim = c.get("temp_limit_gb", 20)
+        if not isinstance(lim, (int, float)) or lim < 0:
+            raise ValueError("temp_limit_gb must be a number of GB")
+        for name, sc in (c.get("sources") or {}).items():
+            if not isinstance(sc, dict) or not isinstance(sc.get("enabled", False), bool):
+                raise ValueError(f"source {name}: enabled must be true or false")
+            if not all(isinstance(x, str) and x.isalnum() for x in sc.get("systems", [])):
+                raise ValueError(f"source {name}: systems must be a list of names")
 
     @staticmethod
     def _check_covers(c: dict):

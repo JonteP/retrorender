@@ -139,6 +139,7 @@ class Libretro:
         self.cache = cache_dir
         self.get = http_get
         self._lists: dict[str, dict] = {}
+        self._indexes: dict = {}
         self._lock = threading.Lock()
 
     @staticmethod
@@ -206,7 +207,7 @@ class Libretro:
             return listing
 
     def search(self, platform: str, names: list[str], kind: str, settings: dict,
-               limit: int = 1) -> list[dict]:
+               limit: int = 1, fuzzy: bool = True) -> list[dict]:
         """Best matches for the album's names: [{system, path, name, score}]. settings may
         have "prefer": a region that goes before the usual order (for one album)."""
         folder = LIBRETRO_TYPES[kind]
@@ -219,21 +220,13 @@ class Libretro:
             return []
         hits = []
         for system in self.systems_for(platform, settings.get("libretro_systems", {})):
-            files = self.listing(system)["files"].get(folder, [])
-            by_norm: dict[str, list[str]] = {}
-            by_main: dict[str, set] = {}        # "Castlevania III" for "… - Dracula's Curse"
-            for f in files:
-                base = f.rsplit(".", 1)[0]
-                k = norm(base)
-                by_norm.setdefault(k, []).append(f)
-                main = re.split(r" - |_ |: ", re.sub(r"\s*\(.*", "", base), maxsplit=1)
-                if len(main) > 1 and not main[0].endswith(", The"):
-                    by_main.setdefault(norm(main[0]), set()).add(k)
+            by_norm, by_main = self._index(system, folder)
             for w in wanted:
                 exact = by_norm.get(w)
                 close = [(1.0, w)] if exact else [
                     (difflib.SequenceMatcher(None, w, k).ratio(), k)
-                    for k in difflib.get_close_matches(w, by_norm, n=max(limit, 3), cutoff=0.86)
+                    for k in (difflib.get_close_matches(w, by_norm, n=max(limit, 3), cutoff=0.86)
+                              if fuzzy else [])
                     if numbers(k) == numbers(w)]
                 if not close and len(by_main.get(w, ())) == 1:    # one game with that main title
                     k = next(iter(by_main[w]))
@@ -261,6 +254,23 @@ class Libretro:
                 seen.add(h["path"])
                 out.append({k: v for k, v in h.items() if k != "_rank"})
         return out[:limit]
+
+    def _index(self, system: str, folder: str):
+        """(normalized name -> files, main title -> normalized names) for one folder."""
+        listing = self.listing(system)
+        key = (system, folder, listing.get("at"))
+        if key not in self._indexes:
+            by_norm: dict[str, list[str]] = {}
+            by_main: dict[str, set] = {}        # "Castlevania III" for "… - Dracula's Curse"
+            for f in listing["files"].get(folder, []):
+                base = f.rsplit(".", 1)[0]
+                k = norm(base)
+                by_norm.setdefault(k, []).append(f)
+                main = re.split(r" - |_ |: ", re.sub(r"\s*\(.*", "", base), maxsplit=1)
+                if len(main) > 1 and not main[0].endswith(", The"):
+                    by_main.setdefault(norm(main[0]), set()).add(k)
+            self._indexes[key] = (by_norm, by_main)
+        return self._indexes[key]
 
     def browse(self, platform: str, query: str, kind: str, settings: dict, limit=12) -> list[dict]:
         """For the cover editor: matches for a typed name, also partial ones."""

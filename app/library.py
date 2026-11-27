@@ -248,10 +248,10 @@ class Library:
                             if p.is_dir() and not p.name.startswith(("_", "."))):
                 self._scan_platform(idx, d)
             # downloads from remote sources come last, so local copies win duplicates
-            synced = self.root / "_synced" / "joshw"
-            if synced.is_dir():
-                for d in sorted(p for p in synced.iterdir() if p.is_dir()):
-                    self._scan_platform(idx, d, platform=self.synced_platform(d.name))
+            synced = self.root / "_synced"
+            for src in sorted(p for p in synced.glob("*") if p.is_dir() and p.name[0] not in "._"):
+                for d in sorted(p for p in src.iterdir() if p.is_dir()):
+                    self._scan_platform(idx, d, platform=self.synced_platform(d.name, src.name))
             self._finish(idx)
             idx.built = time.time()
             self.index = idx
@@ -331,12 +331,12 @@ class Library:
 
     def platform_for(self, f: Path) -> str:
         parts = f.relative_to(self.root).parts
-        if len(parts) > 3 and parts[0] == "_synced" and parts[1] == "joshw":
-            return self.synced_platform(parts[2])
+        if len(parts) > 3 and parts[0] == "_synced":
+            return self.synced_platform(parts[2], parts[1])
         return self.platform_name(parts[0]) if parts else ""
 
-    def synced_platform(self, system: str) -> str:
-        """Console name for a synced source folder; replaced by the server (joshw names)."""
+    def synced_platform(self, system: str, source: str = "joshw") -> str:
+        """Console name for a downloaded source folder; replaced by the server."""
         return system
 
     def _scan_platform(self, idx: Index, pdir: Path, platform: str | None = None):

@@ -15,7 +15,7 @@ Chromecast/DLNA-apparater i nätet (TV, nätverkshögtalare) eller via Subsonic-
 - [Biblioteket](#biblioteket)
 - [Metadata: album.toml och titelkartor](#metadata-albumtoml-och-titelkartor)
 - [Looppolicy](#looppolicy)
-- [joshw.info](#joshwinfo)
+- [Onlinebibliotek](#onlinebibliotek)
 - [Subsonic och Music Assistant](#subsonic-och-music-assistant)
 - [HTTP-API](#http-api)
 - [Utveckling](#utveckling)
@@ -250,20 +250,27 @@ album.toml (album, spår) → URL-parametrar; sist vinner.
 
 `/info` visar för varje spår hur längden räknades fram (`reason`).
 
-## joshw.info
+## Onlinebibliotek
 
-Vyn **joshw** listar spelen för konsolerna i `[joshw] systems` (`wii`, `gcn`, `nsf` …), med
-titel, år, utvecklare och utgivare ur arkivnamnen. Inget laddas ned förrän du väljer:
+Onlinebibliotek slås på under **Settings → Online libraries**: vilka källor och vilka
+konsoler, och hur stor cachen får bli. Första källan är **joshw.info** (konsolspel från
+Nintendo, Sega, Sony med flera, ett arkiv per spel); fler kommer.
 
-- **Listen:** hämtas som *tillfälligt*. Tillfälliga spel över `temp_limit_gb` rensas
-  automatiskt, minst nyligen spelade först.
-- **Add / Keep:** behålls permanent. En favorit via Subsonic (`star`) gör samma sak.
-- **Remove:** tar bort filerna; spelet finns kvar i listan.
+- **Biblioteket:** "Local + online" (bredvid sorteringen) visar det som finns online bland
+  de lokala albumen, med ☁ och omslag från libretro-thumbnails när namnet matchar. Filtren
+  (konsol, år, sök) gäller båda; kompositör och ljudchip finns bara för nedladdade album.
+- **▶ / Download and play:** laddar ned spelet till cachen, packar upp, indexerar och
+  spelar. Små arkiv går på sekunder, GameCube/Wii-spel på 100–200 MB tar en stund.
+- **Cachen** rensas automatiskt när den är större än gränsen, minst nyligen spelade först.
+  Ett nedladdat album som ligger i cachen märks "⤓ cached".
+- **Add to library** (på albumet eller onlinesidan) behåller det permanent. En favorit
+  via Subsonic (`star`) gör samma sak. "Remove the download…" i albumets ⋯ tar bort filerna.
 
-Filerna hamnar i `/library/_synced/joshw/<system>/<arkivnamn>/` med en `.source.json`.
-Spel som redan finns lokalt markeras "already have it". Hänsyn mot joshw.info: en
-nedladdning i taget, `delay_s` sekunders paus, listorna läses om högst var `refresh_hours`.
-Kräver `[joshw] enabled = true` och skrivbar `/library/_synced` (ägd av 568:568).
+Filerna hamnar i `/library/_synced/<källa>/<system>/<arkivnamn>/` med en `.source.json`.
+Hänsyn mot källorna: en nedladdning i taget, `delay_s` sekunders paus mellan anrop,
+listorna läses om högst var `refresh_hours` (`[joshw]` i config.toml). Kräver skrivbar
+`/library/_synced` (ägd av 568:568). Vyn **joshw** i menyn finns kvar som lista över
+nedladdningar.
 
 ## Subsonic och Music Assistant
 
