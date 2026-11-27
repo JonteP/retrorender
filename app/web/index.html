@@ -1265,10 +1265,8 @@ async function viewSettings(v) {
         <div class="opts"><b>Images that are not square</b>
           <label><input type="radio" name="shape" value="crop" ${c.shape === "crop" ? "checked" : ""}> Crop to a square (the middle)</label>
           <label><input type="radio" name="shape" value="pad" ${c.shape === "pad" ? "checked" : ""}> Pad to a square (all of the image)</label>
-          <label><input type="radio" name="shape" value="original" ${c.shape === "original" ? "checked" : ""}> Leave them unchanged</label>
-          <p class="muted" style="margin:6px 0 0">Unchanged: here they are shown whole with empty space
-            around them; TVs and Subsonic apps get the image as it is and decide themselves (most crop it).
-            The choice is also where the cover editor starts. ${s.pillow ? "" : "<b>Pillow is missing, so images are served as they are.</b>"}</p></div>
+          <label title="Shown whole here; TVs and apps get the original"><input type="radio" name="shape" value="original" ${c.shape === "original" ? "checked" : ""}> Leave them unchanged</label>
+          ${s.pillow ? "" : `<p class="muted"><b>Pillow is missing, so images are served as they are.</b></p>`}</div>
       </div>
       <div class="opts" style="margin-top:14px">
         <label><input type="checkbox" id="cauto" ${c.auto ? "checked" : ""}> Fetch covers automatically (after each library scan)</label>
