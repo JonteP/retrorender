@@ -144,6 +144,14 @@ class Req:
         pass
 
 
+def settle():
+    """Wait for a re-index that an API call started in the background."""
+    import time
+    time.sleep(0.05)
+    with lib._lock:
+        pass
+
+
 pls = Playlists(metadir, True, lambda: lib.index)
 web = WebUI({"web": {"user": "u", "password": "p"}}, lib, meta, None, lambda: {}, probe,
             playlists=pls, registry=FakeRegistry())
@@ -191,6 +199,8 @@ web.handle(h, f"/api/album/{ww.id}/tags.m3u", {"part": "0"})
 assert b"sea.fake" in h.wfile.getvalue(), h.out
 h = Req("POST", json.dumps({"title": "Dragon Roost"}).encode())
 web.handle(h, f"/api/song/{ww.songs[3]}/title", {})
+settle()
+ww = lib.index.albums[ww.id]
 assert '"jaiseqs#1" = "Dragon Roost"' in meta.titles_path(ww.parts[1].key).read_text()
 
 # --- covers: the image you chose is kept to crop from; removing the cover keeps it -------
@@ -215,11 +225,13 @@ ww = next(a for a in ix.albums.values() if a.name == "Wind Waker")
 from meta import gen_status  # noqa: E402
 h = Req("POST", json.dumps({"title": "Boss Theme"}).encode())
 assert web.handle(h, f"/api/song/{kirby.songs[1]}/title", {}) and h.out["ok"], h.out
+settle()
 assert '"kirby#1" = "Boss Theme"' in meta.titles_path(kirby.key).read_text()
 text = meta.path_for(kirby.key).read_text()
 assert 'title = "Boss Theme"' in text and gen_status(text)[1], text   # still untouched
 h = Req("POST", json.dumps({"title": "Wily 1"}).encode())
 web.handle(h, f"/api/song/{mm2.songs[1]}/title", {})
+settle()
 assert '"02 wily" = "Wily 1"' in meta.titles_path(mm2.key).read_text()
 meta.delete(mm2.key)                       # a regenerated file keeps the new title
 lib.scan()

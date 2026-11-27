@@ -36,6 +36,7 @@ jobs:
           python tests/test_outputs.py
           python tests/test_updates.py
           python tests/test_library.py
+          python tests/test_online.py
       - name: Compile all modules
         run: python -m compileall -q app tests
 

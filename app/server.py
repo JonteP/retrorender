@@ -36,14 +36,14 @@ from urllib.parse import parse_qs, quote, urlparse
 
 from engines import EngineError, Registry
 from catalog import Catalog, chips_for
-from joshw import Joshw
+from online import Online
 from library import Library
 from meta import MetaStore
 from policy import plan, settings_for, shape
 from subsonic import Subsonic
 from web import WebUI
 
-VERSION = "0.15.1"
+VERSION = "0.16.0"
 BUILD = {"commit": os.environ.get("RETRO_BUILD_COMMIT", "local")[:7],
          "date": os.environ.get("RETRO_BUILD_DATE", "")}
 
@@ -85,8 +85,10 @@ META = MetaStore(Path(_meta_dir).resolve() if _meta_dir else None, LIBRARY)
 CAT = Catalog(META.root / "catalog.sqlite" if META.writable else None)
 LIB = Library(LIBRARY, REG, CFG, probe, SAMPLE_RATE, META, CAT)
 SUB = Subsonic(LIB, CFG)
-JOSHW = Joshw(CFG, CAT, LIBRARY,
-              on_change=lambda: threading.Thread(target=LIB.scan, daemon=True).start())
+from settings import Settings  # noqa: E402
+SETTINGS = Settings(META.root if META.enabled else None, META.writable)
+JOSHW = Online(CFG, CAT, LIBRARY, settings=SETTINGS,
+               on_change=lambda: threading.Thread(target=LIB.scan, daemon=True).start())
 LIB.synced_platform = JOSHW.platform
 SUB.on_star = JOSHW.pin_dir
 
@@ -105,7 +107,7 @@ def health() -> dict:
                       "built": LIB.index.built},
             "engines": [e.name for e in REG.engines],
             "missing": REG.missing,
-            "joshw": {"enabled": JOSHW.enabled, "systems": JOSHW.systems},
+            "online": {"enabled": JOSHW.enabled, "systems": JOSHW.active()},
             "diagnostics": REG.diagnostics()}
 
 
@@ -114,9 +116,7 @@ UPD = UpdateCheck(CFG, BUILD)
 from playlists import Playlists  # noqa: E402
 PLAYLISTS = Playlists(META.root if META.enabled else None, META.writable, lambda: LIB.index)
 SUB.playlists = PLAYLISTS
-from settings import Settings  # noqa: E402
 from covers import CoverFetcher, ShapeCache  # noqa: E402
-SETTINGS = Settings(META.root if META.enabled else None, META.writable)
 LIB.settings = SETTINGS
 LIB.shaper = ShapeCache(META.root / "_cache" / "covers" if META.writable else None)
 COVERS = CoverFetcher(LIB, SETTINGS)
@@ -124,8 +124,13 @@ LIB.after_scan = [COVERS.start]               # fetch covers for new albums
 
 
 def _settings_changed(section, old, new):
+    if section == "online":
+        JOSHW.refresh_all()                       # lists of newly switched-on systems
+        JOSHW.evict()                             # a smaller cache limit applies at once
+        return
     if section != "covers":
         return
+    WEB._rcovers = {}
     for al in list(LIB.index.albums.values()):   # a new order or source applies at once
         LIB.apply_covers(al)
     COVERS.start()
@@ -461,12 +466,11 @@ def main():
           f"{[e.name for e in REG.engines]}, missing: {REG.missing}", flush=True)
     if CFG.get("subsonic", {}).get("enabled", True):
         LIB.start(float(CFG.get("subsonic", {}).get("rescan_minutes", 60)))
-    if JOSHW.enabled:
-        def refresh_loop():
-            while True:
-                JOSHW.refresh_all()               # each system at most once per refresh_hours
-                time.sleep(3600)
-        threading.Thread(target=refresh_loop, daemon=True, name="joshw-refresh").start()
+    def refresh_loop():
+        while True:
+            JOSHW.refresh_all()                   # each system at most once per refresh_hours
+            time.sleep(3600)
+    threading.Thread(target=refresh_loop, daemon=True, name="online-refresh").start()
     UPD.start()                               # "new version available" in the web UI
     from outputs import Outputs
     WEB.outputs = Outputs(CFG, LIB, port)     # Cast/DLNA players in the network

@@ -122,7 +122,7 @@ class WebUI:
         if name == "artists":
             return h._json(self.artists()) or True
         if name == "facets":
-            return h._json(self.facets()) or True
+            return h._json(self.facets(q)) or True
         if name == "albums":
             return h._json(self.albums(q)) or True
         if name == "tracks":
@@ -178,6 +178,8 @@ class WebUI:
             return h._json({"ok": True}) or True
         if name == "joshw":
             return self._joshw(h, parts[1:], q, post)
+        if name == "online" and len(parts) > 1:
+            return self._online(h, parts[1:], q, post)
         if name == "outputs":
             return self._outputs(h, parts[1:], post)
         if name == "regenerate-all":
@@ -237,7 +239,8 @@ class WebUI:
                 "duration": int(sum(ix.songs[s].duration for s in al.songs if s in ix.songs)),
                 "cover": bool(al.cover), "cover_rev": self.lib.cover_rev(al),
                 "region": al.region, "chips": al.chips,
-                "added": al.created}
+                "added": al.created,
+                "online": self.joshw.entry_for(al.first_file) if self.joshw else None}
 
     def song_brief(self, s) -> dict:
         """A track as the player needs it: enough to show it in a queue and play it."""
@@ -264,8 +267,9 @@ class WebUI:
         return sorted(({"id": a.id, "name": a.name, "albums": len(a.albums)}
                        for a in ix.artists.values()), key=lambda x: x["name"].lower())
 
-    def facets(self) -> dict:
-        """Everything the library can be browsed by, with album counts."""
+    def facets(self, q: dict | None = None) -> dict:
+        """Everything the library can be browsed by, with album counts (online=1: also
+        what the online libraries have that is not downloaded)."""
         years: dict[int, int] = {}
         chips: dict[str, int] = {}
         for a in self.lib.index.albums.values():
@@ -273,7 +277,16 @@ class WebUI:
                 years[a.year] = years.get(a.year, 0) + 1
             for c in set(a.chips):
                 chips[c] = chips.get(c, 0) + 1
-        return {"platforms": self.platforms(), "artists": self.artists(),
+        platforms = self.platforms()
+        if (q or {}).get("online") and self.joshw and self.joshw.enabled:
+            c = self.joshw.counts()
+            have = {p["name"]: p for p in platforms}
+            for name, n in c["platforms"].items():
+                have.setdefault(name, {"name": name, "albums": 0, "songs": 0})["albums"] += n
+            platforms = sorted(have.values(), key=lambda x: x["name"].lower())
+            for y, n in c["years"].items():
+                years[y] = years.get(y, 0) + n
+        return {"platforms": platforms, "artists": self.artists(),
                 "years": [{"year": y, "albums": n} for y, n in sorted(years.items())],
                 "chips": [{"name": c, "albums": n}
                           for c, n in sorted(chips.items(), key=lambda x: x[0].lower())]}
@@ -315,11 +328,51 @@ class WebUI:
         als.sort(key=key, reverse=q.get("sort") == "added")
         return als, songs
 
+    PAGE = 240
+
     def albums(self, q: dict) -> dict:
-        ix = self.lib.index
+        """Local albums matching the filters, and with online=1 also entries in the online
+        libraries that are not downloaded, sorted together. offset/limit page the list."""
         als, songs = self._filtered(q)
-        return {"albums": [self._album_brief(a) for a in als],
-                "songs": [self.song_brief(s) for s in songs[:200]]}
+        items = [(self._sort_key(q, a.name, a.platform, a.year, a.created), "l", a) for a in als]
+        o = self.joshw
+        if q.get("online") and o and o.enabled and not q.get("artist") and not q.get("chip"):
+            _, rows = o.search(q=q.get("q", ""), platform=q.get("platform", ""),
+                               year=q.get("year", ""), not_local=True, limit=100000)
+            for r in rows:
+                year = int(r["date"][:4]) if r["date"][:4].isdigit() else None
+                items.append((self._sort_key(q, r["title"], o.platform(r["system"], r["source"]),
+                                             year, ""), "r", r))
+        if not q.get("q"):                        # a search keeps its hits first
+            items.sort(key=lambda x: x[0], reverse=q.get("sort") == "added")
+        off = int(q.get("offset", 0) or 0)
+        lim = min(int(q.get("limit", self.PAGE) or self.PAGE), 2000)
+        page = items[off:off + lim]
+        return {"total": len(items), "offset": off,
+                "local": sum(1 for x in items if x[1] == "l"),
+                "albums": [self._album_brief(x[2]) if x[1] == "l" else self.remote_brief(x[2])
+                           for x in page],
+                "songs": [self.song_brief(s) for s in songs[:200]] if off == 0 else []}
+
+    @staticmethod
+    def _sort_key(q, name, platform, year, added):
+        sort = q.get("sort", "")
+        if sort == "year":
+            return (year or 9999, name.lower())
+        if sort == "added":
+            return (added or "",)
+        if sort == "name":
+            return (name.lower(),)
+        return (platform.lower(), name.lower())
+
+    def remote_brief(self, r: dict) -> dict:
+        o = self.joshw
+        year = int(r["date"][:4]) if r["date"][:4].isdigit() else None
+        return {"id": f"rm-{r['id']}", "name": r["title"], "alt_title": r["alt_title"],
+                "platform": o.platform(r["system"], r["source"]), "year": year, "artists": [],
+                "developer": r["developer"], "publisher": r["publisher"], "size": r["size"],
+                "cover": False, "online": {"id": r["id"], "state": r["state"], "source": r["source"],
+                                           "error": r["error"]}}
 
     MAX_TRACKS = 5000
 
@@ -403,7 +456,7 @@ class WebUI:
             try:
                 b = json.loads(self._body(h) or "{}")
                 for sec, vals in b.items():
-                    if sec != "covers" or not isinstance(vals, dict):
+                    if sec not in ("covers", "online") or not isinstance(vals, dict):
                         raise ValueError(f"unknown section {sec}")
                     st.update(sec, vals)
             except PermissionError as e:
@@ -415,7 +468,10 @@ class WebUI:
             pillow = True
         except ImportError:
             pillow = False
+        o = self.joshw
         return {"covers": st.covers(), "writable": st.writable, "path": str(st.path or ""),
+                "online": ({"sources": o.describe_sources(), "temp_limit_gb": o.conf()["temp_limit_gb"],
+                            "status": o.status(), "available": o.cat.enabled} if o else None),
                 "sources": COVER_SOURCES, "libretro_types": list(LIBRETRO_TYPES), "shapes": list(SHAPES),
                 "pillow": pillow, "status": self.fetcher.status if self.fetcher else None}, 200
 
@@ -728,10 +784,93 @@ class WebUI:
         h.wfile.write(data)
         return True
 
+    # --- online libraries ------------------------------------------------------------------
+    def _online(self, h, parts: list, q: dict, post: bool) -> bool:
+        """/api/online/<id>               an entry: state, download progress, local album
+           /api/online/<id>/cover         a cover found by name (libretro), for the library
+           POST /api/online/<id>/fetch    download (?pin=1: add to the library)
+           POST /api/online/<id>/pin | unpin | remove"""
+        o = self.joshw
+        if o is None or not parts[0].isdigit():
+            return h._json({"error": "not found"}, 404) or True
+        rid = int(parts[0])
+        r = o.get(rid)
+        if r is None:
+            return h._json({"error": "not found"}, 404) or True
+        action = parts[1] if len(parts) > 1 else ""
+        if action == "cover" and not post:
+            return self._online_cover(h, r)
+        if action and post:
+            if not o.writable:
+                return h._json({"error": "/library/_synced is not writable"}, 403) or True
+            if action == "fetch":
+                o.fetch(rid, pin=q.get("pin") == "1")
+            elif action == "pin":
+                o.fetch(rid, pin=True)
+            elif action == "unpin" and r["state"] == "pinned":
+                o.set_state(rid, "temporary")
+            elif action == "remove":
+                o.remove(rid)
+            else:
+                return h._json({"error": "unknown action"}, 404) or True
+            r = o.get(rid)
+        d = self.remote_brief(r)
+        d.update(name=r["name"], title=r["title"], tags=r["tags"], url=r["url"],
+                 albums=self._albums_under(r["local_dir"]) if r["local_dir"] else [],
+                 progress=o.current if o.current and o.current.get("id") == rid else None,
+                 queued=o.jobs.qsize())
+        return h._json(d) or True
+
+    def _online_cover(self, h, r) -> bool:
+        """Box art by name from libretro-thumbnails (exact and subtitle matches only, so it
+        stays fast for a page of cards). 404 when nothing is found."""
+        f = self.fetcher
+        key = r["id"]
+        if not hasattr(self, "_rcovers"):
+            self._rcovers = {}
+        hit = self._rcovers.get(key, "?")
+        if hit == "?":
+            hit = None
+            if f is not None and "libretro" in self.settings.covers()["enabled"]:
+                c = self.settings.covers()
+                try:
+                    hits = f.libretro.search(self.joshw.platform(r["system"], r["source"]),
+                                             [r["title"]], c["libretro_type"], c, fuzzy=False)
+                    hit = hits[0] if hits else None
+                except Exception:       # noqa: BLE001
+                    hit = None
+            self._rcovers[key] = hit
+        if not hit:
+            h.send_response(404)
+            h.send_header("Content-Length", "0")
+            h.end_headers()
+            return True
+        try:
+            data = f.remote_image(hit["system"], hit["path"])
+        except Exception:       # noqa: BLE001
+            h.send_response(404)
+            h.send_header("Content-Length", "0")
+            h.end_headers()
+            return True
+        shape = self.settings.covers()["shape"]
+        if shape != "original":
+            from covers import shape_image
+            try:
+                data = shape_image(data, shape, size=400) or data
+            except Exception:       # noqa: BLE001
+                pass
+        h.send_response(200)
+        h.send_header("Content-Type", "image/jpeg" if data[:3] == b"\xff\xd8\xff" else "image/png")
+        h.send_header("Content-Length", str(len(data)))
+        h.send_header("Cache-Control", "max-age=86400")
+        h.end_headers()
+        h.wfile.write(data)
+        return True
+
     # --- joshw ---------------------------------------------------------------------------
     def _joshw(self, h, parts: list, q: dict, post: bool) -> bool:
         j = self.joshw
-        if j is None or not j.enabled:
+        if j is None or not j.cat.enabled:
             return h._json({"enabled": False}) or True
         if not parts or parts[0] == "status":
             return h._json(j.status()) or True
@@ -740,14 +879,14 @@ class WebUI:
                                    int(q.get("offset", 0) or 0), min(int(q.get("limit", 100) or 100), 500))
             local = self._local_titles()
             for r in rows:
-                r["platform"] = j.platform(r["system"])
+                r["platform"] = j.platform(r["system"], r["source"])
                 r["in_library"] = (r["platform"].lower(), normalize_title(r["title"])) in local
                 r["albums"] = self._albums_under(r["local_dir"]) if r["local_dir"] else []
             return h._json({"total": total, "rows": rows}) or True
         if parts[0] == "refresh" and post:
-            systems = [q["system"]] if q.get("system") else j.systems
-            for s in systems:
-                j.refresh(s, force=q.get("force") == "1")
+            for src, s in j.active():
+                if not q.get("system") or q["system"] == s:
+                    j.refresh(src, s, force=q.get("force") == "1")
             return h._json({"ok": True}) or True
         if parts[0].isdigit() and len(parts) > 1 and post:
             rid, action = int(parts[0]), parts[1]
