@@ -32,12 +32,23 @@ ENV_UNITS_PER_S = 600.0               # 48000 / 32000 per subframe
 GALAXY_FX = [(64, (0, 0x1000, 0, 0, 0, 0, 0x3FFF, 0), 0x7000)]
 MASTER = {2: 0.35, 1: 0.7}            # fixed gain per JAudio version (WW mixes ~6 dB lower)
 
-CURVES = [
-    [1.0, 0.9375, 0.875, 0.8125, 0.75, 0.6875, 0.625, 0.5625, 0.5, 0.4375, 0.375, 0.3125, 0.25, 0.1875, 0.125, 0.0625, 0.0],
-    [1.0, 0.968246, 0.935414, 0.901388, 0.866025, 0.829156, 0.790569, 0.75, 0.707107, 0.661438, 0.612372, 0.559017, 0.5, 0.433013, 0.353553, 0.25, 0.0],
-    [1.0, 0.878906, 0.765625, 0.660156, 0.5625, 0.472656, 0.390625, 0.316406, 0.25, 0.191406, 0.140625, 0.097656, 0.0625, 0.035156, 0.015625, 0.003906, 0.0],
-    [1.0, 0.970489, 0.781274, 0.546281, 0.399792, 0.289315, 0.212104, 0.157476, 0.112613, 0.08179, 0.057985, 0.043642, 0.030824, 0.023713, 0.015259, 0.009156, 0.0],
-]
+
+def _curves() -> list[list[float]]:
+    """Envelope shapes, 17 points from start (1.0) to target (0.0) in equal time steps:
+    0 linear, 1 square root (fast start), 2 squared (slow start), 3 "exponential": about
+    -3 dB per step after a soft start, the way a decay sounds natural."""
+    xs = [(16 - i) / 16 for i in range(17)]
+
+    def expo(i: int) -> float:
+        if i == 16:
+            return 0.0
+        a, c, w = 3.08, 0.2, 2.05            # dB per step, start of the bend, its softness
+        db = -a * (math.hypot(i - c, w) - math.hypot(c, w))
+        return 10 ** (db / 20)
+    return [xs, [math.sqrt(x) for x in xs], [x * x for x in xs], [expo(i) for i in range(17)]]
+
+
+CURVES = _curves()
 
 
 class Env:
